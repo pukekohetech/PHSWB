@@ -1736,7 +1736,7 @@ function setActiveTool(tool) {
 
       if (!arcDraft.hasCenter) {
         let c = w;
-        if (ctrlHeld) {
+        if (!ctrlHeld) {
           const hit = snapPointWithCtrl(c);
           c = hit || snapToMmGridWorld(c);
         } else {
@@ -1764,8 +1764,8 @@ function setActiveTool(tool) {
       state.selectionIndex = -1;
 
       let p1 = w;
-      if (ctrlHeld) {
-        const hit = snapPointWithCtrl(p1);
+      if (!ctrlHeld) {
+        z
         p1 = hit || snapToMmGridWorld(p1);
       } else {
         p1 = snapToMmGridWorld(p1);
@@ -1821,7 +1821,7 @@ function setActiveTool(tool) {
       const ctrlHeld = e.getModifierState("CapsLock");
 
       if (isSnapShape) {
-        if (ctrlHeld) {
+        if (!ctrlHeld) {
           const hit = snapPointWithCtrl(p0);
           p0 = hit || snapToMmGridWorld(p0);
         } else {
@@ -1861,7 +1861,7 @@ if (state.tool === "arc" && arcDraft.hasCenter && !gesture.active) {
   const wPreview = screenToWorld(sx, sy);
 
   let p = wPreview;
-  if (ctrlHeld) {
+  if (!ctrlHeld) {
     const hit = snapPointWithCtrl(p);
     p = hit || snapPointWithCtrlOrAngle({ x: arcDraft.cx, y: arcDraft.cy }, p);
   } else {
@@ -2069,7 +2069,7 @@ if (!gesture.active) return;
 
       let p = w;
       let snappedHit = null;
-      if (ctrlHeld) {
+      if (!ctrlHeld) {
         snappedHit = snapPointWithCtrl(p);
         if (snappedHit) {
           p = snappedHit;
