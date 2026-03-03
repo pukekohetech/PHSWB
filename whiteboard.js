@@ -89,17 +89,19 @@
     sy: 0
   };
 
-  function openLenBoxAt(sx, sy, preset = "") {
-    lenEntry.open = true;
-    lenEntry.sx = sx;
-    lenEntry.sy = sy;
-    lenBox.style.left = sx + "px";
-    lenBox.style.top = sy + "px";
-    lenBox.style.display = "block";
-    lenInput.value = String(preset ?? "");
-    lenInput.focus();
-    lenInput.select();
-  }
+  function openLenBoxAt(sx, sy, currentMmText) {
+  lenEntry.open = true;
+  lenEntry.seedMm = parseMmInput(currentMmText) ?? null;
+
+  lenBox.style.left = Math.round(sx + 12) + "px";
+  lenBox.style.top  = Math.round(sy + 12) + "px";
+  lenBox.style.display = "block";
+
+  // ✅ Start typing immediately without deleting anything
+  lenInput.value = "";
+  lenInput.placeholder = String(currentMmText || "");
+  lenInput.focus({ preventScroll: true });
+}
 
   function moveLenBoxTo(sx, sy) {
     if (!lenEntry.open) return;
@@ -115,49 +117,45 @@
     lenInput.value = "";
   }
 
-  function parseMmInput(s) {
-    const raw = String(s || "").trim().replace(/,/g, ".");
-    const m = raw.match(/[-+]?\d*\.?\d+/);
-    if (!m) return null;
-    const v = parseFloat(m[0]);
-    return isFinite(v) && v > 0 ? v : null;
+ function parseMmInput(v) {
+  const s = String(v || "").trim();
+  if (!s) return null;
+
+  // allow "120", "120mm", "120.5"
+  const n = parseFloat(s.replace(/[^0-9.+-]/g, ""));
+  if (!isFinite(n) || n <= 0) return null;
+
+  // keep it sane
+  return Math.max(0.1, n);
+}
+
+function setActiveLineLengthMm(mm) {
+  if (!gesture.activeObj) return false;
+  const obj = gesture.activeObj;
+  if (!(obj.kind === "line" || obj.kind === "arrow")) return false;
+
+  const ppm = pxPerMm();
+  const lenPx = mm * ppm;
+
+  const x1 = obj.x1, y1 = obj.y1;
+  let dx = (obj.x2 ?? x1) - x1;
+  let dy = (obj.y2 ?? y1) - y1;
+
+  let d = Math.hypot(dx, dy);
+  if (!isFinite(d) || d < 1e-6) {
+    // if it's basically a point, default direction to the right
+    dx = 1; dy = 0; d = 1;
   }
 
-  function setActiveLineLengthMm(mm) {
-    if (!gesture.active || gesture.mode !== "drawShape" || !gesture.activeObj) return false;
-    const obj = gesture.activeObj;
-    if (!(obj.kind === "line" || obj.kind === "arrow")) return false;
+  const ux = dx / d;
+  const uy = dy / d;
 
-    const start = { x: obj.x1, y: obj.y1 };
-    const cur = { x: obj.x2, y: obj.y2 };
+  obj.x2 = x1 + ux * lenPx;
+  obj.y2 = y1 + uy * lenPx;
 
-    let dx = cur.x - start.x;
-    let dy = cur.y - start.y;
-    let len = Math.hypot(dx, dy);
-
-    if (len < 1e-6) {
-      dx = 1;
-      dy = 0;
-      len = 1;
-    }
-
-    const ux = dx / len;
-    const uy = dy / len;
-
-    const lenPx = mm * pxPerMm();
-
-    // keep current direction, set exact length
-    obj.x2 = start.x + ux * lenPx;
-    obj.y2 = start.y + uy * lenPx;
-
-    // then apply your normal “whole-mm length” snap (keeps direction)
-    const snapped = snapToWholeMmLength(start, { x: obj.x2, y: obj.y2 });
-    obj.x2 = snapped.x;
-    obj.y2 = snapped.y;
-
-    redrawAll();
-    return true;
-  }
+  redrawAll();
+  return true;
+}
   // Background DOM layer
   const bgLayer = document.getElementById("bgLayer");
   const bgImg = document.getElementById("bgImg");
@@ -3124,35 +3122,27 @@ document.addEventListener("keydown", (e) => {
         return;
       }
 
-      // open the box when user starts typing (seed with current mm)
-      if (!lenEntry.open && !isEnter) {
-        const o = gesture.activeObj;
-        const curMm = Math.max(
-          1,
-          Math.round(Math.hypot(o.x2 - o.x1, o.y2 - o.y1) / pxPerMm()) || 1
-        );
-        openLenBoxAt(gesture.lastScreen?.sx ?? 0, gesture.lastScreen?.sy ?? 0, String(curMm));
-      }
+if (isEnter) {
+  // ✅ If user typed nothing, use placeholder/seed (current length)
+  const raw = (lenInput.value || "").trim() || lenInput.placeholder || "";
+  let mm = parseMmInput(raw);
 
-      if (!lenEntry.open && isEnter) return;
+  if (mm == null && lenEntry.seedMm != null) mm = lenEntry.seedMm;
 
-      if (isEnter) {
-        const mm = parseMmInput(lenInput.value);
-        if (mm == null) {
-          showToast("Invalid mm");
-          return;
-        }
+  if (mm == null) {
+    showToast("Invalid mm");
+    return;
+  }
 
-        setActiveLineLengthMm(mm);
+  setActiveLineLengthMm(mm);
 
-        // finish draw cleanly
-        closeLenBox();
-        try { inkCanvas.releasePointerCapture(gesture.pointerId); } catch {}
-        hardResetGesture();
-        updateCursorFromTool();
-        redrawAll();
-        return;
-      }
+  closeLenBox();
+  try { inkCanvas.releasePointerCapture(gesture.pointerId); } catch {}
+  hardResetGesture();
+  updateCursorFromTool();
+  redrawAll();
+  return;
+}
 
       if (isBack) {
         lenInput.value = lenInput.value.slice(0, -1);
