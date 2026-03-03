@@ -2460,15 +2460,37 @@ if (!gesture.active) return;
     }
   }
 
-   function onPointerUp() {
-    if (!gesture.active) return;
-    try {
-      inkCanvas.releasePointerCapture(gesture.pointerId);
-    } catch {}
-    closeLenBox();          // ✅ add this
-    hardResetGesture();
-    updateCursorFromTool();
+ function onPointerUp(e) {
+  if (!gesture.active) return;
+
+  // ✅ If we're drawing a line/arrow and length box is open,
+  // apply the typed mm BEFORE ending the gesture
+  if (
+    gesture.mode === "drawShape" &&
+    gesture.activeObj &&
+    (gesture.activeObj.kind === "line" || gesture.activeObj.kind === "arrow") &&
+    lenEntry.open
+  ) {
+    const raw = (lenInput.value || "").trim() || lenInput.placeholder || "";
+    let mm = parseMmInput(raw);
+
+    if (mm == null && lenEntry.seedMm != null) {
+      mm = lenEntry.seedMm;
+    }
+
+    if (mm != null) {
+      setActiveLineLengthMm(mm);
+    }
   }
+
+  try {
+    inkCanvas.releasePointerCapture(gesture.pointerId);
+  } catch {}
+
+  closeLenBox();
+  hardResetGesture();
+  updateCursorFromTool();
+}}
 
   inkCanvas.addEventListener("pointerdown", onPointerDown);
   inkCanvas.addEventListener("pointermove", onPointerMove);
@@ -3122,27 +3144,7 @@ document.addEventListener("keydown", (e) => {
         return;
       }
 
-if (isEnter) {
-  // ✅ If user typed nothing, use placeholder/seed (current length)
-  const raw = (lenInput.value || "").trim() || lenInput.placeholder || "";
-  let mm = parseMmInput(raw);
 
-  if (mm == null && lenEntry.seedMm != null) mm = lenEntry.seedMm;
-
-  if (mm == null) {
-    showToast("Invalid mm");
-    return;
-  }
-
-  setActiveLineLengthMm(mm);
-
-  closeLenBox();
-  try { inkCanvas.releasePointerCapture(gesture.pointerId); } catch {}
-  hardResetGesture();
-  updateCursorFromTool();
-  redrawAll();
-  return;
-}
 
       if (isBack) {
         lenInput.value = lenInput.value.slice(0, -1);
