@@ -3092,9 +3092,15 @@ if (!parts.length && !pendingBg) {
   });
 
   // ---------- Keyboard ----------
-document.addEventListener("keydown", (e) => {
-  const tag = (document.activeElement && document.activeElement.tagName) || "";
-  const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+
+   document.addEventListener("keydown", (e) => {
+  const activeEl = document.activeElement;
+  const tag = (activeEl && activeEl.tagName) || "";
+
+  // ✅ treat our floating length box as "not typing" so shortcuts still work
+  const typing =
+    (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") &&
+    activeEl !== lenInput;
 
   // Escape closes panels + tips + length box
   if (e.key === "Escape") {
