@@ -237,7 +237,142 @@ function strokeWidthNum(el){
     const nearInt = Math.abs(mm - Math.round(mm)) < 0.05;
     return (nearInt ? Math.round(mm).toString() : mm.toFixed(1)) + " mm";
   }
+  // ---------- Precise size entry (Enter while drawing) ----------
+  function parseMmPair(input) {
+    // Accepts:
+    //  "120" -> {a:120,b:null}
+    //  "120x45" / "120 × 45" / "120,45" -> {a:120,b:45}
+    //  "d=120" / "diam 120" -> {a:120,b:null, mode:"diam"}
+    const s = String(input || "").trim().toLowerCase();
+    if (!s) return null;
 
+    const isDiam = /\b(d|dia|diam|diameter)\b/.test(s) || s.includes("d=");
+    const cleaned = s.replace(/[^\d.+-x×, ]+/g, " ").trim();
+
+    let a = null, b = null;
+
+    // split on x / × / comma
+    const parts = cleaned.split(/(?:x|×|,)+/).map(t => t.trim()).filter(Boolean);
+    if (parts.length >= 1) a = parseFloat(parts[0]);
+    if (parts.length >= 2) b = parseFloat(parts[1]);
+
+    if (!isFinite(a)) return null;
+    if (b != null && !isFinite(b)) b = null;
+
+    return { a, b, mode: isDiam ? "diam" : "pair" };
+  }
+
+  function unitVecFromDrag(dx, dy) {
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return { ux: 1, uy: 0, len: 0 };
+    return { ux: dx / len, uy: dy / len, len };
+  }
+
+  function applyPreciseToActiveShape() {
+    if (!gesture.active) return false;
+    if (gesture.mode !== "drawShape") return false;
+    const obj = gesture.activeObj;
+    if (!obj) return false;
+
+    const k = obj.kind;
+    if (!["line", "arrow", "rect", "circle"].includes(k)) return false;
+
+    const start = { x: obj.x1, y: obj.y1 };
+    const dx = (obj.x2 ?? obj.x1) - obj.x1;
+    const dy = (obj.y2 ?? obj.y1) - obj.y1;
+    const { ux, uy } = unitVecFromDrag(dx, dy);
+
+    const ppm = pxPerMm();
+
+    if (k === "line" || k === "arrow") {
+      const curMm = Math.max(1, Math.round(Math.hypot(dx, dy) / ppm) || 1);
+      const mmStr = prompt("Line length (mm):", String(curMm));
+      if (mmStr == null) return true;
+      const mm = parseFloat(String(mmStr).replace(/[^0-9.+-]/g, ""));
+      if (!isFinite(mm) || mm <= 0) {
+        showToast("Invalid mm");
+        return true;
+      }
+      const lenPx = mm * ppm;
+
+      // keep current direction (or default 0°), then re-apply your normal snapping
+      const raw = { x: start.x + ux * lenPx, y: start.y + uy * lenPx };
+      const snapped = snapToWholeMmLength(start, raw);
+
+      obj.x2 = snapped.x;
+      obj.y2 = snapped.y;
+
+      redrawAll();
+      return true;
+    }
+
+    if (k === "rect") {
+      const curW = Math.max(1, Math.round(Math.abs(dx) / ppm) || 1);
+      const curH = Math.max(1, Math.round(Math.abs(dy) / ppm) || 1);
+
+      const inStr = prompt('Rect size (mm). Examples: "120x45" or "120":', `${curW}x${curH}`);
+      if (inStr == null) return true;
+      const p = parseMmPair(inStr);
+      if (!p) { showToast("Invalid size"); return true; }
+
+      const wMm = Math.max(1, Math.round(p.a));
+      const hMm = Math.max(1, Math.round(p.b ?? p.a)); // single number => square
+
+      const sgnX = dx >= 0 ? 1 : -1;
+      const sgnY = dy >= 0 ? 1 : -1;
+
+      const x2 = start.x + sgnX * (wMm * ppm);
+      const y2 = start.y + sgnY * (hMm * ppm);
+
+      // keep your normal mm-grid snap for rect endpoint
+      const p2 = snapToMmGridWorld({ x: x2, y: y2 });
+      obj.x2 = p2.x;
+      obj.y2 = p2.y;
+
+      redrawAll();
+      return true;
+    }
+
+    if (k === "circle") {
+      const curW = Math.max(1, Math.round(Math.abs(dx) / ppm) || 1);
+      const curH = Math.max(1, Math.round(Math.abs(dy) / ppm) || 1);
+      const curD = Math.max(1, Math.round((curW + curH) / 2) || 1);
+
+      const inStr = prompt(
+        'Circle size (mm). Examples:\n- "50" (diameter)\n- "80x40" (ellipse)\n- "d=60" (diameter)',
+        String(curD)
+      );
+      if (inStr == null) return true;
+      const p = parseMmPair(inStr);
+      if (!p) { showToast("Invalid size"); return true; }
+
+      let wMm, hMm;
+      if (p.b != null) {
+        wMm = Math.max(1, Math.round(p.a));
+        hMm = Math.max(1, Math.round(p.b));
+      } else {
+        // single number => diameter (even if user didn't write "d")
+        const dMm = Math.max(1, Math.round(p.a));
+        wMm = dMm;
+        hMm = dMm;
+      }
+
+      const sgnX = dx >= 0 ? 1 : -1;
+      const sgnY = dy >= 0 ? 1 : -1;
+
+      const x2 = start.x + sgnX * (wMm * ppm);
+      const y2 = start.y + sgnY * (hMm * ppm);
+
+      const p2 = snapToMmGridWorld({ x: x2, y: y2 });
+      obj.x2 = p2.x;
+      obj.y2 = p2.y;
+
+      redrawAll();
+      return true;
+    }
+
+    return false;
+  }
   function showMeasureTip(sx, sy, text) {
     measureTip.textContent = text;
     measureTip.style.left = sx + "px";
@@ -2840,6 +2975,15 @@ if (!parts.length && !pendingBg) {
       toggleColorPop(false);
       arcDraft.hasCenter = false;
       hideMeasureTip();
+    }
+
+         // ✅ Enter = type exact size while a shape is being drawn
+    if (!typing && e.key === "Enter") {
+      const did = applyPreciseToActiveShape();
+      if (did) {
+        e.preventDefault();
+        return;
+      }
     }
 
     if (e.code === "Space") {
