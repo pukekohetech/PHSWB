@@ -1,4 +1,4 @@
-/* =========================================================
+/* ==========================================================
    whiteboard.js — background as DOM image (no zoom artefacts)
 
    ADDITIONS (requested):
