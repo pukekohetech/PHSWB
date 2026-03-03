@@ -1732,11 +1732,11 @@ function setActiveTool(tool) {
 
     // Arc tool (two-stage): click to set center, then click+drag to draw
     if (state.tool === "arc") {
-      const ctrlHeld = e.getModifierState("CapsLock");
+      const ctrlHeld = !e.getModifierState("CapsLock");
 
       if (!arcDraft.hasCenter) {
         let c = w;
-        if (!ctrlHeld) {
+        if (ctrlHeld) {
           const hit = snapPointWithCtrl(c);
           c = hit || snapToMmGridWorld(c);
         } else {
@@ -1764,8 +1764,8 @@ function setActiveTool(tool) {
       state.selectionIndex = -1;
 
       let p1 = w;
-      if (!ctrlHeld) {
-        z
+      if (ctrlHeld) {
+        const hit = snapPointWithCtrl(p1);
         p1 = hit || snapToMmGridWorld(p1);
       } else {
         p1 = snapToMmGridWorld(p1);
@@ -1818,10 +1818,10 @@ function setActiveTool(tool) {
     if (["line", "rect", "circle", "arrow"].includes(state.tool)) {
       let p0 = w;
       const isSnapShape = state.tool === "line" || state.tool === "arrow" || state.tool === "rect" || state.tool === "circle";
-      const ctrlHeld = e.getModifierState("CapsLock");
+      const ctrlHeld = !e.getModifierState("CapsLock");
 
       if (isSnapShape) {
-        if (!ctrlHeld) {
+        if (ctrlHeld) {
           const hit = snapPointWithCtrl(p0);
           p0 = hit || snapToMmGridWorld(p0);
         } else {
@@ -1857,11 +1857,11 @@ function setActiveTool(tool) {
   // Arc tool: show tip immediately after center is picked (even before dragging)
 // Arc tool: live radius tooltip after center is picked (before dragging)
 if (state.tool === "arc" && arcDraft.hasCenter && !gesture.active) {
-  const ctrlHeld = e.getModifierState("CapsLock");
+  const ctrlHeld = !e.getModifierState("CapsLock");
   const wPreview = screenToWorld(sx, sy);
 
   let p = wPreview;
-  if (!ctrlHeld) {
+  if (ctrlHeld) {
     const hit = snapPointWithCtrl(p);
     p = hit || snapPointWithCtrlOrAngle({ x: arcDraft.cx, y: arcDraft.cy }, p);
   } else {
@@ -2062,14 +2062,14 @@ if (!gesture.active) return;
 
     // Drawing: Arc (CW/CCW + full circle snap + length indicator)
     if (gesture.mode === "drawArc" && gesture.activeObj && gesture.arcCenter) {
-      const ctrlHeld = e.getModifierState("CapsLock");
+      const ctrlHeld = !e.getModifierState("CapsLock");
 
       const cx = gesture.arcCenter.cx;
       const cy = gesture.arcCenter.cy;
 
       let p = w;
       let snappedHit = null;
-      if (!ctrlHeld) {
+      if (ctrlHeld) {
         snappedHit = snapPointWithCtrl(p);
         if (snappedHit) {
           p = snappedHit;
@@ -2133,7 +2133,7 @@ if (!gesture.active) return;
       let y2 = w.y;
 
       const k = gesture.activeObj.kind;
-      const ctrlHeld = e.getModifierState("CapsLock");
+      const ctrlHeld = !e.getModifierState("CapsLock");
 
       const startPt = { x: gesture.activeObj.x1, y: gesture.activeObj.y1 };
       const rawPt = { x: x2, y: y2 };
