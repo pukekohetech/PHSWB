@@ -46,6 +46,118 @@
   measureTip.style.display = "none";
   stage.appendChild(measureTip);
 
+     // ---------- Floating length entry (type while dragging line/arrow) ----------
+  const lenBox = document.createElement("div");
+  lenBox.id = "lenBox";
+  lenBox.style.position = "absolute";
+  lenBox.style.zIndex = "60";
+  lenBox.style.pointerEvents = "auto";
+  lenBox.style.display = "none";
+  lenBox.style.padding = "6px 8px";
+  lenBox.style.borderRadius = "12px";
+  lenBox.style.background = "rgba(0,0,0,0.78)";
+  lenBox.style.color = "#fff";
+  lenBox.style.boxShadow = "0 10px 26px rgba(0,0,0,0.25)";
+  lenBox.style.transform = "translate(12px, 12px)";
+  lenBox.style.font = "12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
+
+  const lenInput = document.createElement("input");
+  lenInput.type = "text";
+  lenInput.inputMode = "decimal";
+  lenInput.autocomplete = "off";
+  lenInput.placeholder = "mm";
+  lenInput.style.width = "92px";
+  lenInput.style.border = "0";
+  lenInput.style.outline = "0";
+  lenInput.style.borderRadius = "10px";
+  lenInput.style.padding = "6px 8px";
+  lenInput.style.background = "rgba(255,255,255,0.12)";
+  lenInput.style.color = "#fff";
+
+  const lenSuffix = document.createElement("span");
+  lenSuffix.textContent = "  mm";
+  lenSuffix.style.opacity = "0.9";
+  lenSuffix.style.marginLeft = "6px";
+
+  lenBox.appendChild(lenInput);
+  lenBox.appendChild(lenSuffix);
+  stage.appendChild(lenBox);
+
+  const lenEntry = {
+    open: false,
+    sx: 0,
+    sy: 0
+  };
+
+  function openLenBoxAt(sx, sy, preset = "") {
+    lenEntry.open = true;
+    lenEntry.sx = sx;
+    lenEntry.sy = sy;
+    lenBox.style.left = sx + "px";
+    lenBox.style.top = sy + "px";
+    lenBox.style.display = "block";
+    lenInput.value = String(preset ?? "");
+    lenInput.focus();
+    lenInput.select();
+  }
+
+  function moveLenBoxTo(sx, sy) {
+    if (!lenEntry.open) return;
+    lenEntry.sx = sx;
+    lenEntry.sy = sy;
+    lenBox.style.left = sx + "px";
+    lenBox.style.top = sy + "px";
+  }
+
+  function closeLenBox() {
+    lenEntry.open = false;
+    lenBox.style.display = "none";
+    lenInput.value = "";
+  }
+
+  function parseMmInput(s) {
+    const raw = String(s || "").trim().replace(/,/g, ".");
+    const m = raw.match(/[-+]?\d*\.?\d+/);
+    if (!m) return null;
+    const v = parseFloat(m[0]);
+    return isFinite(v) && v > 0 ? v : null;
+  }
+
+  function setActiveLineLengthMm(mm) {
+    if (!gesture.active || gesture.mode !== "drawShape" || !gesture.activeObj) return false;
+    const obj = gesture.activeObj;
+    if (!(obj.kind === "line" || obj.kind === "arrow")) return false;
+
+    const start = { x: obj.x1, y: obj.y1 };
+    const cur = { x: obj.x2, y: obj.y2 };
+
+    let dx = cur.x - start.x;
+    let dy = cur.y - start.y;
+    let len = Math.hypot(dx, dy);
+
+    if (len < 1e-6) {
+      dx = 1;
+      dy = 0;
+      len = 1;
+    }
+
+    const ux = dx / len;
+    const uy = dy / len;
+
+    const lenPx = mm * pxPerMm();
+
+    // keep current direction, set exact length
+    obj.x2 = start.x + ux * lenPx;
+    obj.y2 = start.y + uy * lenPx;
+
+    // then apply your normal “whole-mm length” snap (keeps direction)
+    const snapped = snapToWholeMmLength(start, { x: obj.x2, y: obj.y2 });
+    obj.x2 = snapped.x;
+    obj.y2 = snapped.y;
+
+    redrawAll();
+    return true;
+  }
   // Background DOM layer
   const bgLayer = document.getElementById("bgLayer");
   const bgImg = document.getElementById("bgImg");
@@ -196,6 +308,8 @@ function attrOrStyle(el, attr, cssName){
   const v = st[String(cssName || attr).toLowerCase()];
   return (v != null && String(v).trim() !== "") ? String(v).trim() : null;
 }
+
+
 function strokeStr(el){ return attrOrStyle(el, "stroke", "stroke"); }
 function fillStr(el){ return attrOrStyle(el, "fill", "fill"); }
 function strokeWidthNum(el){
@@ -1644,6 +1758,8 @@ function setActiveTool(tool) {
     gesture.arcA1 = 0;
     gesture.arcLastA = 0;
     gesture.arcAccum = 0;
+
+     closeLenBox();     // ✅ add this
   }
 
   // ---------- Cursor UX ----------
@@ -1987,6 +2103,7 @@ function setActiveTool(tool) {
 
   function onPointerMove(e) {
     const { sx, sy } = clientToScreen(e);
+     if (lenEntry.open) moveLenBoxTo(sx, sy);
     updateHoverCursor(sx, sy);
 
   // Arc tool: show tip immediately after center is picked (even before dragging)
@@ -2345,11 +2462,12 @@ if (!gesture.active) return;
     }
   }
 
-  function onPointerUp() {
+   function onPointerUp() {
     if (!gesture.active) return;
     try {
       inkCanvas.releasePointerCapture(gesture.pointerId);
     } catch {}
+    closeLenBox();          // ✅ add this
     hardResetGesture();
     updateCursorFromTool();
   }
@@ -2969,161 +3087,210 @@ if (!parts.length && !pendingBg) {
   });
 
   // ---------- Keyboard ----------
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      openSettings(false);
-      toggleColorPop(false);
-      arcDraft.hasCenter = false;
-      hideMeasureTip();
-    }
+document.addEventListener("keydown", (e) => {
+  const tag = (document.activeElement && document.activeElement.tagName) || "";
+  const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 
-         // ✅ Enter = type exact size while a shape is being drawn
-    if (!typing && e.key === "Enter") {
-      const did = applyPreciseToActiveShape();
-      if (did) {
-        e.preventDefault();
-        return;
-      }
-    }
+  // Escape closes panels + tips + length box
+  if (e.key === "Escape") {
+    openSettings(false);
+    toggleColorPop(false);
+    arcDraft.hasCenter = false;
+    hideMeasureTip();
+    closeLenBox();
+    return;
+  }
 
-    if (e.code === "Space") {
-      spacePanning = true;
+  // ---------- Type-to-set length while dragging LINE/ARROW ----------
+  if (
+    !typing &&
+    gesture.active &&
+    gesture.mode === "drawShape" &&
+    gesture.activeObj &&
+    (gesture.activeObj.kind === "line" || gesture.activeObj.kind === "arrow")
+  ) {
+    const isDigit = /^[0-9]$/.test(e.key);
+    const isDot = e.key === "." || e.key === ",";
+    const isBack = e.key === "Backspace";
+    const isEnter = e.key === "Enter";
+    const isEsc = e.key === "Escape";
+    const isMinus = e.key === "-";
+
+    if (isDigit || isDot || isBack || isEnter || isEsc || isMinus) {
       e.preventDefault();
-      if (gesture.active && gesture.mode === "pan") inkCanvas.style.cursor = "grabbing";
+
+      if (isEsc) {
+        closeLenBox();
+        return;
+      }
+
+      // open the box when user starts typing (seed with current mm)
+      if (!lenEntry.open && !isEnter) {
+        const o = gesture.activeObj;
+        const curMm = Math.max(
+          1,
+          Math.round(Math.hypot(o.x2 - o.x1, o.y2 - o.y1) / pxPerMm()) || 1
+        );
+        openLenBoxAt(gesture.lastScreen?.sx ?? 0, gesture.lastScreen?.sy ?? 0, String(curMm));
+      }
+
+      if (!lenEntry.open && isEnter) return;
+
+      if (isEnter) {
+        const mm = parseMmInput(lenInput.value);
+        if (mm == null) {
+          showToast("Invalid mm");
+          return;
+        }
+
+        setActiveLineLengthMm(mm);
+
+        // finish draw cleanly
+        closeLenBox();
+        try { inkCanvas.releasePointerCapture(gesture.pointerId); } catch {}
+        hardResetGesture();
+        updateCursorFromTool();
+        redrawAll();
+        return;
+      }
+
+      if (isBack) {
+        lenInput.value = lenInput.value.slice(0, -1);
+        return;
+      }
+
+      if (isDigit) lenInput.value += e.key;
+      else if (isDot) lenInput.value += ".";
+      else if (isMinus) lenInput.value += "-";
+
+      return;
+    }
+  }
+
+  // Space pan
+  if (e.code === "Space") {
+    spacePanning = true;
+    e.preventDefault();
+    if (gesture.active && gesture.mode === "pan") inkCanvas.style.cursor = "grabbing";
+    return;
+  }
+
+  // SVG reveal controls (when an SVG has been imported as ink)
+  if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
+    e.preventDefault();
+    const total = svgReveal.partIndices.length;
+    if (!total) return;
+
+    if (e.key === ".") {
+      while (svgReveal.revealed < total) {
+        const idx = svgReveal.partIndices[svgReveal.revealed];
+        const obj = state.objects[idx];
+        svgReveal.revealed += 1;
+        if (obj) {
+          obj.hidden = false;
+          break;
+        }
+      }
+      redrawAll();
+      showToast(`SVG: ${Math.min(svgReveal.revealed, total)}/${total}`);
+      return;
     }
 
-    const tag = (document.activeElement && document.activeElement.tagName) || "";
-    const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    if (e.key === ",") {
+      while (svgReveal.revealed > 0) {
+        svgReveal.revealed -= 1;
+        const idx = svgReveal.partIndices[svgReveal.revealed];
+        const obj = state.objects[idx];
+        if (obj) {
+          obj.hidden = true;
+          break;
+        }
+      }
+      redrawAll();
+      showToast(`SVG: ${Math.max(svgReveal.revealed, 0)}/${total}`);
+      return;
+    }
+  }
 
-    // SVG reveal controls (when an SVG has been imported as ink)
-    if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
+  // Delete removes selection (when not typing)
+  if (!typing && (e.key === "Delete" || e.key === "Backspace")) {
+    if (state.selectionIndex >= 0) {
+      pushUndo();
+      clearRedo();
+      state.objects.splice(state.selectionIndex, 1);
+      state.selectionIndex = -1;
+      redrawAll();
+      showToast("Deleted");
+      return;
+    }
+  }
+
+  // Tool hotkeys
+  if (!typing) {
+    const k = e.key.toLowerCase();
+    if (k === "v") setActiveTool("select");
+    if (k === "p") setActiveTool("pen");
+    if (k === "l") setActiveTool("line");
+    if (k === "r") setActiveTool("rect");
+    if (k === "c") setActiveTool("circle");
+    if (k === "g") setActiveTool("arc");
+    if (k === "a") setActiveTool("arrow");
+    if (k === "t") setActiveTool("text");
+    if (k === "e") setActiveTool("eraser");
+  }
+
+  // Undo/redo shortcuts
+  const isMac = navigator.platform.toUpperCase().includes("MAC");
+  const mod = isMac ? e.metaKey : e.ctrlKey;
+
+  if (mod) {
+    const key = e.key.toLowerCase();
+    if (key === "z" && !e.shiftKey) {
       e.preventDefault();
-      const total = svgReveal.partIndices.length;
-      if (!total) return;
+      hardResetGesture();
+      undo();
+      return;
+    } else if (key === "y" || (key === "z" && e.shiftKey)) {
+      e.preventDefault();
+      hardResetGesture();
+      redo();
+      return;
+    }
+  }
 
-      if (e.key === ".") {
-        // Skip any missing indices (objects may have been deleted/undone)
-        while (svgReveal.revealed < total) {
-          const idx = svgReveal.partIndices[svgReveal.revealed];
-          const obj = state.objects[idx];
-          svgReveal.revealed += 1;
-          if (obj) {
-            obj.hidden = false;
-            break;
-          }
-        }
-        redrawAll();
-        showToast(`SVG: ${Math.min(svgReveal.revealed, total)}/${total}`);
-        return;
-      }
+  // ----- Ctrl/Cmd + NUMBER / +/- / ARROWS helpers -----
+  if (!typing && (e.getModifierState("CapsLock"))) {
+    const digit = /^[0-9]$/.test(e.key) ? Number(e.key) : null;
 
-      if (e.key === ",") {
-        // Skip any missing indices
-        while (svgReveal.revealed > 0) {
-          svgReveal.revealed -= 1;
-          const idx = svgReveal.partIndices[svgReveal.revealed];
-          const obj = state.objects[idx];
-          if (obj) {
-            obj.hidden = true;
-            break;
-          }
-        }
-        redrawAll();
-        showToast(`SVG: ${Math.max(svgReveal.revealed, 0)}/${total}`);
-        return;
-      }
+    if (digit !== null) {
+      e.preventDefault();
+      const size = digit === 0 ? 13 : digit;
+      setBrushSizeFromHotkey(size);
+      return;
     }
 
-    // Delete removes selection (when not typing)
-    if (!typing && (e.key === "Delete" || e.key === "Backspace")) {
-      if (state.selectionIndex >= 0) {
-        pushUndo();
-        clearRedo();
-        state.objects.splice(state.selectionIndex, 1);
-        state.selectionIndex = -1;
-        redrawAll();
-        showToast("Deleted");
-      }
+    if (e.key === "=" || e.key === "+") {
+      e.preventDefault();
+      setBrushSizeFromHotkey(state.size + (e.shiftKey ? 8 : 16));
+      return;
+    }
+    if (e.key === "-" || e.key === "_") {
+      e.preventDefault();
+      setBrushSizeFromHotkey(state.size - (e.shiftKey ? 8 : 16));
+      return;
     }
 
-    // Tool hotkeys
-    if (!typing) {
-      const k = e.key.toLowerCase();
-      if (k === "v") setActiveTool("select");
-      if (k === "p") setActiveTool("pen");
-      if (k === "l") setActiveTool("line");
-      if (k === "r") setActiveTool("rect");
-      if (k === "c") setActiveTool("circle");
-      if (k === "g") setActiveTool("arc");
-      if (k === "a") setActiveTool("arrow");
-      if (k === "t") setActiveTool("text");
-      if (k === "e") setActiveTool("eraser");
+    if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      const step = e.shiftKey ? 160 : 60;
+      if (e.key === "ArrowUp") nudgePan(0, step);
+      if (e.key === "ArrowDown") nudgePan(0, -step);
+      if (e.key === "ArrowLeft") nudgePan(step, 0);
+      if (e.key === "ArrowRight") nudgePan(-step, 0);
+      return;
     }
-
-    // Undo/redo shortcuts
-    const isMac = navigator.platform.toUpperCase().includes("MAC");
-    const mod = isMac ? e.metaKey : e.ctrlKey;
-
-    if (mod) {
-      const key = e.key.toLowerCase();
-      if (key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        hardResetGesture();
-        undo();
-        return;
-      } else if (key === "y" || (key === "z" && e.shiftKey)) {
-        e.preventDefault();
-        hardResetGesture();
-        redo();
-        return;
-      }
-    }
-
-    // ----- Ctrl/Cmd + NUMBER / +/- / ARROWS helpers -----
-    if (!typing && (e.getModifierState("CapsLock"))) {
-      // Top row digits + numpad digits
-      const digit = /^[0-9]$/.test(e.key) ? Number(e.key) : null;
-
-      if (digit !== null) {
-        e.preventDefault();
-        // map 0 => 10, 1..9 => 1..9
-        const size = digit === 0 ? 13 : digit;
-        setBrushSizeFromHotkey(size);
-        return;
-      }
-
-      // Ctrl/Cmd + = / - : quick size up/down
-      if (e.key === "=" || e.key === "+") {
-        e.preventDefault();
-        setBrushSizeFromHotkey(state.size + (e.shiftKey ? 8 : 16));
-        return;
-      }
-      if (e.key === "-" || e.key === "_") {
-        e.preventDefault();
-        setBrushSizeFromHotkey(state.size - (e.shiftKey ? 8 : 16));
-        return;
-      }
-
-      // Ctrl/Cmd + ARROWS = pan camera
-      if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        e.preventDefault();
-        const step = e.shiftKey ? 160 : 60; // px per tap (Shift = faster)
-        if (e.key === "ArrowUp") nudgePan(0, step);
-        if (e.key === "ArrowDown") nudgePan(0, -step);
-        if (e.key === "ArrowLeft") nudgePan(step, 0);
-        if (e.key === "ArrowRight") nudgePan(-step, 0);
-        return;
-      }
-    }
-  });
-
-  document.addEventListener("keyup", (e) => {
-    if (e.code === "Space") {
-      spacePanning = false;
-      updateCursorFromTool();
-    }
-  });
-
+  }
+});
   // ---------- Boards ----------
   const LS_KEY = "PHS_WHITEBOARD_BOARDS_v8";
 
