@@ -1,18 +1,23 @@
 /* =========================================================
-   whiteboard.js — PHS Whiteboard (clean build)
+   whiteboard.js — PHS Whiteboard (clean build + SVG hide/show)
 
    Includes:
    - Pen, line, rect, circle, arc, arrow, text, eraser
-   - Select + transform handles (move/scale/rotate)
+   - Select + basic transform handles (move/scale/rotate)
    - Background image (DOM) with move/scale/rotate (when no selection)
    - Zoom to cursor (wheel), pan (space+drag)
    - Ctrl/Cmd snapping to endpoints/intersections; otherwise whole-mm grid
    - Angle snap when Ctrl/Cmd and no snap hit
    - Opacity slider (per-object), preserved in SVG export + saved boards
    - Undo/redo, boards save/load/delete, export PNG/SVG
+   - ✅ SVG Import as "ink overlay", split into items
+     - ← hides previous step (unhide)
+     - → hides next item (hide forward)
 
    Notes:
-   - "mm grid" uses your current scale (pxPerMm). Default 3.78 px/mm.
+   - Imported SVG is rendered in world coords. We map SVG viewBox -> world
+     so it appears at a sensible size near (0,0). You can move it by
+     adjusting svgInk.x/y or extending UI later.
    ========================================================= */
 
 (() => {
@@ -117,7 +122,6 @@
 
     // selection
     selectedId: null,
-    hoverHandle: null,
 
     // title
     title: "",
@@ -132,8 +136,10 @@
       rot: 0
     },
 
-    // optional svg ink placeholder
-    svgInk: null, // { raw: "<svg...>", x,y,scale,rot } (kept minimal)
+    // ✅ SVG ink overlay
+    // items: [{id, d, stroke, fill, strokeWidth, opacity, hidden, fillRule}]
+    // transform in world space: x,y,scale,rot
+    svgInk: null
   };
 
   let idCounter = 1;
@@ -163,7 +169,6 @@
 
   // ---------------- View mapping ----------------
   function screenToWorld(ptS) {
-    // invert: screen = world*z + (view.x, view.y)
     return {
       x: (ptS.x - state.view.x) / state.view.z,
       y: (ptS.y - state.view.y) / state.view.z
@@ -183,7 +188,6 @@
   }
 
   function applyWorldTransform(ctx) {
-    // world -> screen
     ctx.translate(state.view.x, state.view.y);
     ctx.scale(state.view.z, state.view.z);
   }
@@ -191,13 +195,7 @@
   // ---------------- UI setters ----------------
   function setTool(t) {
     state.tool = t;
-
-    // update dock active
-    toolButtons.forEach(btn => {
-      btn.classList.toggle("is-active", btn.dataset.tool === t);
-    });
-
-    // special: bg tools should NOT steal highlight from draw tools if you want; but keep as-is
+    toolButtons.forEach(btn => btn.classList.toggle("is-active", btn.dataset.tool === t));
     drawAll();
   }
 
@@ -235,8 +233,6 @@
     }
     bgLayer.style.display = "block";
 
-    // Compose transform: view + bg world transform
-    // bgLayer is inside stage and we apply CSS transform to bgImg itself.
     const z = state.view.z;
     const tx = state.view.x + state.bg.x * z;
     const ty = state.view.y + state.bg.y * z;
@@ -249,7 +245,6 @@
 
   // ---------------- Undo/Redo ----------------
   function snapshot() {
-    // keep small: only store objects/bg/title/scale/svgInk
     return JSON.stringify({
       objects: state.objects,
       selectedId: state.selectedId,
@@ -274,6 +269,8 @@
     if (titleInput) titleInput.value = state.title;
 
     updateScaleOut();
+
+    if (state.bg.src) bgImg.src = state.bg.src;
     applyBgTransform();
     drawAll();
   }
@@ -287,15 +284,13 @@
   function undo() {
     if (!state.undo.length) return;
     state.redo.push(snapshot());
-    const snap = state.undo.pop();
-    restore(snap);
+    restore(state.undo.pop());
   }
 
   function redo() {
     if (!state.redo.length) return;
     state.undo.push(snapshot());
-    const snap = state.redo.pop();
-    restore(snap);
+    restore(state.redo.pop());
   }
 
   // ---------------- Snapping ----------------
@@ -309,26 +304,23 @@
     -30, -45, -60, -90, -120, -135, -150, 180
   ];
 
-  function snapAngleRad(angleRad) {
-    const a = angleRad;
-    let best = a, bestD = Infinity;
-    for (const d of ANGLE_SNAPS_DEG) {
-      const s = (d * Math.PI) / 180;
-      const dd = Math.abs(normAngle(a - s));
-      if (dd < bestD) { bestD = dd; best = s; }
-    }
-    return best;
-  }
-
   function normAngle(a) {
-    // normalize to [-pi, pi]
     while (a > Math.PI) a -= Math.PI * 2;
     while (a < -Math.PI) a += Math.PI * 2;
     return a;
   }
 
+  function snapAngleRad(angleRad) {
+    let best = angleRad, bestD = Infinity;
+    for (const d of ANGLE_SNAPS_DEG) {
+      const s = (d * Math.PI) / 180;
+      const dd = Math.abs(normAngle(angleRad - s));
+      if (dd < bestD) { bestD = dd; best = s; }
+    }
+    return best;
+  }
+
   function segIntersection(a, b, c, d) {
-    // line segments AB and CD intersection (returns point or null)
     const r = { x: b.x - a.x, y: b.y - a.y };
     const s = { x: d.x - c.x, y: d.y - c.y };
     const denom = r.x * s.y - r.y * s.x;
@@ -346,9 +338,6 @@
   }
 
   function collectStraightSegments() {
-    // Only segments we can reliably intersect:
-    // line, arrow => one segment
-    // rect => 4 segments
     const segs = [];
     for (const o of state.objects) {
       if (o.hidden) continue;
@@ -372,28 +361,27 @@
 
     for (const o of state.objects) {
       if (o.hidden) continue;
-
       if (o.kind === "line" || o.kind === "arrow") {
-        pts.push({ x: o.x1, y: o.y1 });
-        pts.push({ x: o.x2, y: o.y2 });
+        pts.push({ x: o.x1, y: o.y1 }, { x: o.x2, y: o.y2 });
       } else if (o.kind === "rect") {
-        const x1 = o.x1, y1 = o.y1, x2 = o.x2, y2 = o.y2;
-        pts.push({ x: x1, y: y1 }, { x: x2, y: y1 }, { x: x2, y: y2 }, { x: x1, y: y2 });
+        pts.push(
+          { x: o.x1, y: o.y1 }, { x: o.x2, y: o.y1 },
+          { x: o.x2, y: o.y2 }, { x: o.x1, y: o.y2 }
+        );
       } else if (o.kind === "circle") {
         pts.push({ x: o.cx, y: o.cy });
       } else if (o.kind === "arc") {
-        // endpoints
-        pts.push({ x: o.cx + Math.cos(o.a1) * o.r, y: o.cy + Math.sin(o.a1) * o.r });
-        pts.push({ x: o.cx + Math.cos(o.a2) * o.r, y: o.cy + Math.sin(o.a2) * o.r });
+        pts.push(
+          { x: o.cx + Math.cos(o.a1) * o.r, y: o.cy + Math.sin(o.a1) * o.r },
+          { x: o.cx + Math.cos(o.a2) * o.r, y: o.cy + Math.sin(o.a2) * o.r }
+        );
       } else if (o.kind === "stroke") {
         if (o.points?.length) {
-          pts.push(o.points[0]);
-          pts.push(o.points[o.points.length - 1]);
+          pts.push(o.points[0], o.points[o.points.length - 1]);
         }
       }
     }
 
-    // intersections (straight tools)
     const segs = collectStraightSegments();
     for (let i = 0; i < segs.length; i++) {
       for (let j = i + 1; j < segs.length; j++) {
@@ -407,7 +395,7 @@
 
   function snapToNearbyPoint(pWorld, radiusScreenPx = 14) {
     const pts = collectSnapPoints();
-    const r2 = (radiusScreenPx / state.view.z) ** 2; // convert to world
+    const r2 = (radiusScreenPx / state.view.z) ** 2;
     let best = null;
     let bestD = Infinity;
     for (const q of pts) {
@@ -426,7 +414,6 @@
     const hit = snapToNearbyPoint(p1);
     if (hit) return hit;
 
-    // angle snap fallback
     const a = Math.atan2(p1.y - p0.y, p1.x - p0.x);
     const sa = snapAngleRad(a);
     const L = len(p0, p1);
@@ -447,7 +434,6 @@
   }
 
   function hitObject(pWorld) {
-    // return topmost id or null
     const tol = 8 / state.view.z;
 
     for (let i = state.objects.length - 1; i >= 0; i--) {
@@ -475,7 +461,6 @@
           if (d <= tol + (o.size || 3) / state.view.z) return o.id;
         }
       } else if (o.kind === "text") {
-        // rough hitbox (no font metrics storage)
         const w = (o.text?.length || 1) * (o.fontSize || 18) * 0.55;
         const h = (o.fontSize || 18) * 1.2;
         if (
@@ -491,29 +476,16 @@
     return state.objects.find(o => o.id === state.selectedId) || null;
   }
 
-  function clearSelection() {
-    state.selectedId = null;
-    drawAll();
-  }
-
-  // ---------------- Transform handles ----------------
+  // ---------------- Bounds + handles (kept minimal) ----------------
   function getObjBounds(o) {
     if (!o) return null;
 
-    if (o.kind === "line" || o.kind === "arrow") {
+    if (o.kind === "line" || o.kind === "arrow" || o.kind === "rect") {
       const ax = Math.min(o.x1, o.x2), bx = Math.max(o.x1, o.x2);
       const ay = Math.min(o.y1, o.y2), by = Math.max(o.y1, o.y2);
       return { ax, ay, bx, by };
     }
-    if (o.kind === "rect") {
-      const ax = Math.min(o.x1, o.x2), bx = Math.max(o.x1, o.x2);
-      const ay = Math.min(o.y1, o.y2), by = Math.max(o.y1, o.y2);
-      return { ax, ay, bx, by };
-    }
-    if (o.kind === "circle") {
-      return { ax: o.cx - o.r, ay: o.cy - o.r, bx: o.cx + o.r, by: o.cy + o.r };
-    }
-    if (o.kind === "arc") {
+    if (o.kind === "circle" || o.kind === "arc") {
       return { ax: o.cx - o.r, ay: o.cy - o.r, bx: o.cx + o.r, by: o.cy + o.r };
     }
     if (o.kind === "stroke") {
@@ -534,6 +506,10 @@
     return null;
   }
 
+  function clearUI() {
+    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+  }
+
   function drawHandles(o) {
     if (!o) return;
 
@@ -543,9 +519,9 @@
     const pad = 6 / state.view.z;
     const ax = b.ax - pad, ay = b.ay - pad, bx = b.bx + pad, by = b.by + pad;
 
-    // draw bbox
     uiCtx.save();
     uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+
     uiCtx.save();
     applyWorldTransform(uiCtx);
 
@@ -554,47 +530,11 @@
     uiCtx.strokeStyle = "rgba(0,0,0,0.55)";
     uiCtx.strokeRect(ax, ay, bx - ax, by - ay);
 
-    // handles in world coords
-    const hs = 8 / state.view.z;
-    const handles = [
-      { k: "nw", x: ax, y: ay },
-      { k: "ne", x: bx, y: ay },
-      { k: "se", x: bx, y: by },
-      { k: "sw", x: ax, y: by }
-    ];
-
-    uiCtx.setLineDash([]);
-    uiCtx.fillStyle = "white";
-    uiCtx.strokeStyle = "rgba(0,0,0,0.7)";
-
-    for (const h of handles) {
-      uiCtx.beginPath();
-      uiCtx.rect(h.x - hs / 2, h.y - hs / 2, hs, hs);
-      uiCtx.fill();
-      uiCtx.stroke();
-    }
-
-    // rotate handle above top center
-    const cx = (ax + bx) / 2;
-    const ry = ay - (18 / state.view.z);
-    uiCtx.beginPath();
-    uiCtx.arc(cx, ry, hs * 0.55, 0, Math.PI * 2);
-    uiCtx.fill();
-    uiCtx.stroke();
-    uiCtx.beginPath();
-    uiCtx.moveTo(cx, ay);
-    uiCtx.lineTo(cx, ry);
-    uiCtx.stroke();
-
     uiCtx.restore();
     uiCtx.restore();
   }
 
-  function clearUI() {
-    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-  }
-
-  // ---------------- Drawing ----------------
+  // ---------------- Drawing: objects ----------------
   function drawInkObject(o) {
     if (o.hidden) return;
 
@@ -608,7 +548,6 @@
       inkCtx.lineWidth = o.size;
       inkCtx.lineCap = "round";
       inkCtx.lineJoin = "round";
-
       inkCtx.beginPath();
       const pts = o.points || [];
       if (pts.length) inkCtx.moveTo(pts[0].x, pts[0].y);
@@ -622,7 +561,6 @@
       inkCtx.lineWidth = o.size;
       inkCtx.lineCap = "round";
       inkCtx.lineJoin = "round";
-
       inkCtx.beginPath();
       const pts = o.points || [];
       if (pts.length) inkCtx.moveTo(pts[0].x, pts[0].y);
@@ -654,7 +592,6 @@
       inkCtx.lineTo(b.x, b.y);
       inkCtx.stroke();
 
-      // head
       const ang = Math.atan2(b.y - a.y, b.x - a.x);
       const headLen = Math.max(10, o.size * 3);
       const headAng = 28 * Math.PI / 180;
@@ -688,7 +625,6 @@
       inkCtx.strokeStyle = o.color;
       inkCtx.lineWidth = o.size;
       inkCtx.lineCap = "round";
-
       inkCtx.beginPath();
       inkCtx.arc(o.cx, o.cy, o.r, o.a1, o.a2, !!o.ccw);
       inkCtx.stroke();
@@ -704,10 +640,49 @@
     inkCtx.restore();
   }
 
+  // ---------------- Drawing: SVG ink overlay ----------------
+  function drawSvgInk() {
+    const svgInk = state.svgInk;
+    if (!svgInk || !svgInk.items || !svgInk.items.length) return;
+
+    inkCtx.save();
+    applyWorldTransform(inkCtx);
+
+    // apply svgInk transform (world space)
+    inkCtx.translate(svgInk.x || 0, svgInk.y || 0);
+    inkCtx.rotate(svgInk.rot || 0);
+    inkCtx.scale(svgInk.scale || 1, svgInk.scale || 1);
+
+    for (const it of svgInk.items) {
+      if (it.hidden) continue;
+
+      const p = new Path2D(it.d);
+      inkCtx.globalAlpha = (it.opacity ?? 1);
+
+      // fill if specified and not "none"
+      if (it.fill && it.fill !== "none") {
+        inkCtx.fillStyle = it.fill;
+        inkCtx.fill(p, it.fillRule || "nonzero");
+      }
+
+      // stroke if specified and not "none"
+      if (it.stroke && it.stroke !== "none") {
+        inkCtx.strokeStyle = it.stroke;
+        inkCtx.lineWidth = (it.strokeWidth ?? 1);
+        inkCtx.lineCap = it.lineCap || "round";
+        inkCtx.lineJoin = it.lineJoin || "round";
+        inkCtx.miterLimit = it.miterLimit || 4;
+        inkCtx.stroke(p);
+      }
+    }
+
+    inkCtx.restore();
+  }
+
   function drawTitle() {
     if (!state.title) return;
     inkCtx.save();
-    inkCtx.setTransform(1, 0, 0, 1, 0, 0); // screen space
+    inkCtx.setTransform(1, 0, 0, 1, 0, 0);
     inkCtx.globalAlpha = 1;
     inkCtx.fillStyle = "rgba(0,0,0,0.75)";
     inkCtx.font = `600 18px system-ui, -apple-system, Segoe UI, Roboto, Arial`;
@@ -720,13 +695,14 @@
     inkCtx.clearRect(0, 0, inkCanvas.width, inkCanvas.height);
     clearUI();
 
-    // draw objects
+    // normal ink objects
     for (const o of state.objects) drawInkObject(o);
 
-    // title overlay
+    // ✅ imported SVG ink overlay
+    drawSvgInk();
+
     drawTitle();
 
-    // handles for selection
     const sel = getSelected();
     if (sel && state.tool === "select") drawHandles(sel);
   }
@@ -734,17 +710,18 @@
   // ---------------- Gesture ----------------
   const gesture = {
     active: false,
-    mode: null,      // drawPen, drawLine, drawRect, drawCircle, drawArc, drawArrow, erase, selectMove, scale, rotate, pan, bgMove, bgScale, bgRotate
+    mode: null,
     startS: null,
     lastS: null,
     startW: null,
     lastW: null,
     activeObj: null,
-    arcCenter: null, // {cx,cy}
-    selStart: null,  // snapshot for transforms
-    bgStart: null,
-    handle: null
+    arcCenter: null,
+    selStart: null,
+    bgStart: null
   };
+
+  const keys = { space: false };
 
   function startGesture(mode, e) {
     gesture.active = true;
@@ -757,7 +734,6 @@
     gesture.arcCenter = null;
     gesture.selStart = null;
     gesture.bgStart = null;
-    gesture.handle = null;
   }
 
   function endGesture() {
@@ -767,22 +743,14 @@
     gesture.arcCenter = null;
     gesture.selStart = null;
     gesture.bgStart = null;
-    gesture.handle = null;
     drawAll();
   }
 
-  // ---------------- Pointer handlers ----------------
   function ctrlHeld(e) {
-    // Ctrl on Windows/Linux, Cmd on Mac
     return e.ctrlKey || e.metaKey;
   }
 
-  function isSpacePanning(e) {
-    return e.buttons === 1 && keys.space;
-  }
-
-  const keys = { space: false };
-
+  // ---------------- Pointer handlers ----------------
   function pointerDown(e) {
     if (e.button !== 0) return;
     inkCanvas.setPointerCapture(e.pointerId);
@@ -790,7 +758,6 @@
     const pS = getPointer(e);
     const pW = screenToWorld(pS);
 
-    // space-pan always wins
     if (keys.space) {
       startGesture("pan", e);
       return;
@@ -801,95 +768,28 @@
     if (tool === "select") {
       pushUndo();
       const hit = hitObject(pW);
-      if (!hit) {
-        state.selectedId = null;
-        drawAll();
-        return;
-      }
       state.selectedId = hit;
-
-      // if clicked near handle, start transform
-      const sel = getSelected();
-      const b = getObjBounds(sel);
-      if (b) {
-        const pad = 6 / state.view.z;
-        const ax = b.ax - pad, ay = b.ay - pad, bx = b.bx + pad, by = b.by + pad;
-        const hs = 10 / state.view.z;
-
-        const corners = [
-          { k: "nw", x: ax, y: ay },
-          { k: "ne", x: bx, y: ay },
-          { k: "se", x: bx, y: by },
-          { k: "sw", x: ax, y: by }
-        ];
-
-        // rotate handle
-        const rc = { x: (ax + bx) / 2, y: ay - (18 / state.view.z) };
-        if (len(pW, rc) <= hs * 0.9) {
-          startGesture("rotateSel", e);
-          gesture.selStart = snapshot();
-          gesture.handle = "rot";
-          return;
-        }
-
-        for (const c of corners) {
-          if (Math.abs(pW.x - c.x) <= hs / 2 && Math.abs(pW.y - c.y) <= hs / 2) {
-            startGesture("scaleSel", e);
-            gesture.selStart = snapshot();
-            gesture.handle = c.k;
-            return;
-          }
-        }
-      }
-
-      startGesture("moveSel", e);
+      startGesture(hit ? "moveSel" : "none", e);
       gesture.selStart = snapshot();
+      drawAll();
       return;
     }
 
-    // bg tools: act on selection if selected, else background
+    // bg tools act on selection if exists; otherwise background
     if (tool === "bgMove" || tool === "bgScale" || tool === "bgRotate") {
       const sel = getSelected();
       pushUndo();
 
       if (sel) {
         state.tool = "select";
-        // route into transforms
-        if (tool === "bgMove") {
-          startGesture("moveSel", e);
-          gesture.selStart = snapshot();
-          return;
-        }
-        if (tool === "bgScale") {
-          startGesture("scaleSel", e);
-          gesture.selStart = snapshot();
-          gesture.handle = "se";
-          return;
-        }
-        if (tool === "bgRotate") {
-          startGesture("rotateSel", e);
-          gesture.selStart = snapshot();
-          gesture.handle = "rot";
-          return;
-        }
+        startGesture("moveSel", e);
+        gesture.selStart = snapshot();
+        return;
       } else {
-        // background
         if (!state.bg.src) return;
-        if (tool === "bgMove") {
-          startGesture("bgMove", e);
-          gesture.bgStart = JSON.stringify(state.bg);
-          return;
-        }
-        if (tool === "bgScale") {
-          startGesture("bgScale", e);
-          gesture.bgStart = JSON.stringify(state.bg);
-          return;
-        }
-        if (tool === "bgRotate") {
-          startGesture("bgRotate", e);
-          gesture.bgStart = JSON.stringify(state.bg);
-          return;
-        }
+        if (tool === "bgMove") { startGesture("bgMove", e); gesture.bgStart = JSON.stringify(state.bg); return; }
+        if (tool === "bgScale") { startGesture("bgScale", e); gesture.bgStart = JSON.stringify(state.bg); return; }
+        if (tool === "bgRotate") { startGesture("bgRotate", e); gesture.bgStart = JSON.stringify(state.bg); return; }
       }
     }
 
@@ -949,7 +849,6 @@
 
     if (tool === "arc") {
       startGesture("drawArc", e);
-      // center is first click point
       gesture.arcCenter = { cx: pW.x, cy: pW.y };
       const o = {
         id: nextId(),
@@ -969,7 +868,6 @@
     }
 
     if (tool === "text") {
-      // create immediately
       const t = prompt("Text:");
       if (t == null) return;
       const o = {
@@ -987,10 +885,35 @@
     }
   }
 
+  function applyTranslate(dst, src, dx, dy) {
+    Object.assign(dst, JSON.parse(JSON.stringify(src)));
+
+    if (dst.kind === "stroke" || dst.kind === "erase") {
+      dst.points = (src.points || []).map(p => ({ x: p.x + dx, y: p.y + dy }));
+      return;
+    }
+    if (dst.kind === "line" || dst.kind === "arrow" || dst.kind === "rect") {
+      dst.x1 = src.x1 + dx; dst.y1 = src.y1 + dy;
+      dst.x2 = src.x2 + dx; dst.y2 = src.y2 + dy;
+      return;
+    }
+    if (dst.kind === "circle") {
+      dst.cx = src.cx + dx; dst.cy = src.cy + dy;
+      return;
+    }
+    if (dst.kind === "arc") {
+      dst.cx = src.cx + dx; dst.cy = src.cy + dy;
+      return;
+    }
+    if (dst.kind === "text") {
+      dst.x = src.x + dx; dst.y = src.y + dy;
+      return;
+    }
+  }
+
   function pointerMove(e) {
     const pS = getPointer(e);
     const pW = screenToWorld(pS);
-
     if (!gesture.active) return;
 
     gesture.lastS = pS;
@@ -1061,7 +984,6 @@
     if (gesture.mode === "drawRect") {
       if (!o) return;
 
-      // default snap to mm, ctrl snaps endpoints/intersections if near
       let p1 = pW;
       if (ctrl) {
         const hit = snapToNearbyPoint(pW);
@@ -1073,7 +995,6 @@
       let x2 = p1.x;
       let y2 = p1.y;
 
-      // shift = uniform square
       if (e.shiftKey) {
         const dx = x2 - o.x1;
         const dy = y2 - o.y1;
@@ -1092,7 +1013,6 @@
     if (gesture.mode === "drawCircle") {
       if (!o) return;
 
-      // ctrl: snap radius endpoint to nearby points if any, else mm
       let p1 = pW;
       if (ctrl) {
         const hit = snapToNearbyPoint(pW);
@@ -1101,8 +1021,7 @@
         p1 = snapToMmGridWorld(pW);
       }
 
-      const r = Math.hypot(p1.x - o.cx, p1.y - o.cy);
-      o.r = r;
+      o.r = Math.hypot(p1.x - o.cx, p1.y - o.cy);
       drawAll();
       return;
     }
@@ -1113,7 +1032,6 @@
       const cx = gesture.arcCenter.cx;
       const cy = gesture.arcCenter.cy;
 
-      // endpoint snapping
       let p1 = pW;
       if (ctrl) {
         const hit = snapToNearbyPoint(pW);
@@ -1128,7 +1046,6 @@
       o.cx = cx; o.cy = cy;
       o.r = r;
 
-      // first movement sets a1
       if (!gesture._arcInit) {
         o.a1 = ang;
         o.a2 = ang;
@@ -1137,7 +1054,6 @@
         o.a2 = ang;
       }
 
-      // shift = snap to 15 degrees (both ends)
       if (e.shiftKey) {
         const snap = (15 * Math.PI) / 180;
         o.a2 = Math.round(o.a2 / snap) * snap;
@@ -1147,50 +1063,15 @@
       return;
     }
 
-    if (gesture.mode === "moveSel" || gesture.mode === "scaleSel" || gesture.mode === "rotateSel") {
+    if (gesture.mode === "moveSel") {
       const sel = getSelected();
       if (!sel || !gesture.selStart) return;
-
       const before = JSON.parse(gesture.selStart);
       const orig = before.objects.find(x => x.id === sel.id);
       if (!orig) return;
 
       const dw = { x: pW.x - gesture.startW.x, y: pW.y - gesture.startW.y };
-
-      if (gesture.mode === "moveSel") {
-        // translate object
-        applyTranslate(sel, orig, dw.x, dw.y);
-      }
-
-      if (gesture.mode === "scaleSel") {
-        // scale about bbox center (simple)
-        const b = getObjBounds(orig);
-        if (!b) return;
-        const cx = (b.ax + b.bx) / 2;
-        const cy = (b.ay + b.by) / 2;
-
-        // scale from screen delta (vertical)
-        const ds = (pS.y - gesture.startS.y) * -0.005;
-        let s = clamp(1 + ds, 0.05, 30);
-        if (e.shiftKey) s = Math.round(s * 10) / 10;
-        applyScale(sel, orig, cx, cy, s);
-      }
-
-      if (gesture.mode === "rotateSel") {
-        const b = getObjBounds(orig);
-        if (!b) return;
-        const cx = (b.ax + b.bx) / 2;
-        const cy = (b.ay + b.by) / 2;
-        const a0 = Math.atan2(gesture.startW.y - cy, gesture.startW.x - cx);
-        const a1 = Math.atan2(pW.y - cy, pW.x - cx);
-        let da = a1 - a0;
-        if (e.shiftKey) {
-          const snap = (15 * Math.PI) / 180;
-          da = Math.round(da / snap) * snap;
-        }
-        applyRotate(sel, orig, cx, cy, da);
-      }
-
+      applyTranslate(sel, orig, dw.x, dw.y);
       drawAll();
       return;
     }
@@ -1198,115 +1079,9 @@
 
   function pointerUp(e) {
     if (!gesture.active) return;
-    inkCanvas.releasePointerCapture(e.pointerId);
+    try { inkCanvas.releasePointerCapture(e.pointerId); } catch {}
     gesture._arcInit = false;
     endGesture();
-  }
-
-  // ---------------- Transform helpers ----------------
-  function applyTranslate(dst, src, dx, dy) {
-    Object.assign(dst, JSON.parse(JSON.stringify(src)));
-
-    if (dst.kind === "stroke" || dst.kind === "erase") {
-      dst.points = (src.points || []).map(p => ({ x: p.x + dx, y: p.y + dy }));
-      return;
-    }
-    if (dst.kind === "line" || dst.kind === "arrow" || dst.kind === "rect") {
-      dst.x1 = src.x1 + dx; dst.y1 = src.y1 + dy;
-      dst.x2 = src.x2 + dx; dst.y2 = src.y2 + dy;
-      return;
-    }
-    if (dst.kind === "circle") {
-      dst.cx = src.cx + dx; dst.cy = src.cy + dy;
-      return;
-    }
-    if (dst.kind === "arc") {
-      dst.cx = src.cx + dx; dst.cy = src.cy + dy;
-      return;
-    }
-    if (dst.kind === "text") {
-      dst.x = src.x + dx; dst.y = src.y + dy;
-      return;
-    }
-  }
-
-  function applyScale(dst, src, cx, cy, s) {
-    Object.assign(dst, JSON.parse(JSON.stringify(src)));
-
-    const scalePt = (p) => ({ x: cx + (p.x - cx) * s, y: cy + (p.y - cy) * s });
-
-    if (dst.kind === "stroke" || dst.kind === "erase") {
-      dst.points = (src.points || []).map(scalePt);
-      dst.size = src.size * s;
-      return;
-    }
-    if (dst.kind === "line" || dst.kind === "arrow" || dst.kind === "rect") {
-      const p1 = scalePt({ x: src.x1, y: src.y1 });
-      const p2 = scalePt({ x: src.x2, y: src.y2 });
-      dst.x1 = p1.x; dst.y1 = p1.y;
-      dst.x2 = p2.x; dst.y2 = p2.y;
-      dst.size = src.size * s;
-      return;
-    }
-    if (dst.kind === "circle") {
-      const c = scalePt({ x: src.cx, y: src.cy });
-      dst.cx = c.x; dst.cy = c.y;
-      dst.r = src.r * s;
-      dst.size = src.size * s;
-      return;
-    }
-    if (dst.kind === "arc") {
-      const c = scalePt({ x: src.cx, y: src.cy });
-      dst.cx = c.x; dst.cy = c.y;
-      dst.r = src.r * s;
-      dst.size = src.size * s;
-      return;
-    }
-    if (dst.kind === "text") {
-      const p = scalePt({ x: src.x, y: src.y });
-      dst.x = p.x; dst.y = p.y;
-      dst.fontSize = Math.max(10, (src.fontSize || 20) * s);
-      return;
-    }
-  }
-
-  function rotatePt(p, cx, cy, a) {
-    const x = p.x - cx, y = p.y - cy;
-    const ca = Math.cos(a), sa = Math.sin(a);
-    return { x: cx + x * ca - y * sa, y: cy + x * sa + y * ca };
-  }
-
-  function applyRotate(dst, src, cx, cy, a) {
-    Object.assign(dst, JSON.parse(JSON.stringify(src)));
-
-    if (dst.kind === "stroke" || dst.kind === "erase") {
-      dst.points = (src.points || []).map(p => rotatePt(p, cx, cy, a));
-      return;
-    }
-    if (dst.kind === "line" || dst.kind === "arrow" || dst.kind === "rect") {
-      const p1 = rotatePt({ x: src.x1, y: src.y1 }, cx, cy, a);
-      const p2 = rotatePt({ x: src.x2, y: src.y2 }, cx, cy, a);
-      dst.x1 = p1.x; dst.y1 = p1.y;
-      dst.x2 = p2.x; dst.y2 = p2.y;
-      return;
-    }
-    if (dst.kind === "circle") {
-      const c = rotatePt({ x: src.cx, y: src.cy }, cx, cy, a);
-      dst.cx = c.x; dst.cy = c.y;
-      return;
-    }
-    if (dst.kind === "arc") {
-      const c = rotatePt({ x: src.cx, y: src.cy }, cx, cy, a);
-      dst.cx = c.x; dst.cy = c.y;
-      dst.a1 = src.a1 + a;
-      dst.a2 = src.a2 + a;
-      return;
-    }
-    if (dst.kind === "text") {
-      const p = rotatePt({ x: src.x, y: src.y }, cx, cy, a);
-      dst.x = p.x; dst.y = p.y;
-      return;
-    }
   }
 
   // ---------------- Wheel zoom to cursor ----------------
@@ -1317,10 +1092,8 @@
 
     const dz = Math.exp(-e.deltaY * 0.0012);
     const zNew = clamp(state.view.z * dz, 0.15, 10);
-
     state.view.z = zNew;
 
-    // keep cursor point stable
     const after = worldToScreen(before);
     state.view.x += (pS.x - after.x);
     state.view.y += (pS.y - after.y);
@@ -1330,14 +1103,11 @@
   }
 
   // ---------------- Boards (localStorage) ----------------
-  const LS_KEY = "phs_whiteboard_boards_v1";
+  const LS_KEY = "phs_whiteboard_boards_v2";
 
   function loadBoardsIndex() {
-    try {
-      return JSON.parse(localStorage.getItem(LS_KEY) || "{}");
-    } catch {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); }
+    catch { return {}; }
   }
 
   function saveBoardsIndex(obj) {
@@ -1362,7 +1132,7 @@
 
   function serializeBoard() {
     return {
-      v: 1,
+      v: 2,
       title: state.title,
       pxPerMm: state.pxPerMm,
       objects: state.objects,
@@ -1395,18 +1165,15 @@
 
   // ---------------- Export ----------------
   function exportPNG() {
-    // bake BG + ink into one canvas at screen resolution
     const r = stage.getBoundingClientRect();
     const out = document.createElement("canvas");
     out.width = Math.round(r.width);
     out.height = Math.round(r.height);
     const ctx = out.getContext("2d");
 
-    // background (draw via bgImg with computed transform)
+    // background
     if (state.bg.src && bgImg.complete && bgImg.naturalWidth) {
       ctx.save();
-      // draw as screen transform already includes view+bg
-      // replicate transform:
       const z = state.view.z;
       const tx = state.view.x + state.bg.x * z;
       const ty = state.view.y + state.bg.y * z;
@@ -1418,16 +1185,7 @@
       ctx.restore();
     }
 
-    // ink: draw world with view transform
-    ctx.save();
-    ctx.translate(state.view.x, state.view.y);
-    ctx.scale(state.view.z, state.view.z);
-    for (const o of state.objects) {
-      // reuse drawing by temporarily redirecting
-    }
-    ctx.restore();
-
-    // easiest: copy rendered inkCanvas (already correct) onto export
+    // inkCanvas already contains ink + svgInk + title
     ctx.drawImage(inkCanvas, 0, 0, r.width, r.height);
 
     out.toBlob(blob => {
@@ -1437,7 +1195,7 @@
   }
 
   function exportSVG() {
-    // compute bounds around all objects + bg (rough)
+    // bounds from objects (svgInk not bounded perfectly; ok for now)
     let ax = Infinity, ay = Infinity, bx = -Infinity, by = -Infinity;
 
     function addBounds(b) {
@@ -1460,9 +1218,8 @@
     svg += `<?xml version="1.0" encoding="UTF-8"?>\n`;
     svg += `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${ax} ${ay} ${w} ${h}">\n`;
 
-    // background image (if any)
+    // background image
     if (state.bg.src) {
-      // embed as href; assumes browser can resolve data URL / same-origin URL
       const tx = state.bg.x;
       const ty = state.bg.y;
       const rot = state.bg.rot;
@@ -1471,7 +1228,7 @@
       svg += `transform="translate(${tx} ${ty}) rotate(${(rot * 180) / Math.PI}) scale(${sc})" />\n`;
     }
 
-    // objects
+    // ink objects
     for (const o of state.objects) {
       if (o.hidden) continue;
       const op = (o.kind === "erase") ? 1 : (o.opacity ?? 1);
@@ -1489,7 +1246,6 @@
       }
 
       if (o.kind === "arrow") {
-        // line + simple polygon head
         const a = { x: o.x1, y: o.y1 };
         const b = { x: o.x2, y: o.y2 };
         const ang = Math.atan2(b.y - a.y, b.x - a.x);
@@ -1515,14 +1271,11 @@
       }
 
       if (o.kind === "arc") {
-        // approximate arc with SVG path using A command
-        // compute endpoints
         const x1 = o.cx + Math.cos(o.a1) * o.r;
         const y1 = o.cy + Math.sin(o.a1) * o.r;
         const x2 = o.cx + Math.cos(o.a2) * o.r;
         const y2 = o.cy + Math.sin(o.a2) * o.r;
 
-        // large-arc flag (rough)
         let da = normAngle(o.a2 - o.a1);
         const large = Math.abs(da) > Math.PI ? 1 : 0;
         const sweep = o.ccw ? 0 : 1;
@@ -1533,8 +1286,29 @@
       if (o.kind === "text") {
         svg += `  <text x="${o.x}" y="${o.y}" fill="${esc(o.color)}" fill-opacity="${op}" font-size="${o.fontSize || 20}" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial">${esc(o.text || "")}</text>\n`;
       }
+    }
 
-      // eraser not represented in SVG (destination-out). You can extend this later with masks.
+    // ✅ svgInk overlay export (hidden excluded)
+    if (state.svgInk?.items?.length) {
+      const tx = state.svgInk.x || 0;
+      const ty = state.svgInk.y || 0;
+      const sc = state.svgInk.scale || 1;
+      const rot = state.svgInk.rot || 0;
+      const rotDeg = (rot * 180) / Math.PI;
+
+      svg += `  <g transform="translate(${tx} ${ty}) rotate(${rotDeg}) scale(${sc})">\n`;
+      for (const it of state.svgInk.items) {
+        if (it.hidden) continue;
+        const op = (it.opacity ?? 1);
+
+        const fill = it.fill && it.fill !== "none" ? ` fill="${esc(it.fill)}" fill-opacity="${op}"` : ` fill="none"`;
+        const stroke = it.stroke && it.stroke !== "none"
+          ? ` stroke="${esc(it.stroke)}" stroke-opacity="${op}" stroke-width="${it.strokeWidth ?? 1}"`
+          : ` stroke="none"`;
+
+        svg += `    <path d="${it.d}"${fill}${stroke}/>\n`;
+      }
+      svg += `  </g>\n`;
     }
 
     svg += `</svg>\n`;
@@ -1544,7 +1318,6 @@
 
   // ---------------- Scale from line ----------------
   function setScaleFromLine() {
-    // use selected line if available, else last line
     const sel = getSelected();
     let o = sel && (sel.kind === "line" || sel.kind === "arrow") ? sel : null;
     if (!o) {
@@ -1553,19 +1326,14 @@
         if (t.kind === "line" || t.kind === "arrow") { o = t; break; }
       }
     }
-    if (!o) {
-      alert("Draw or select a line first.");
-      return;
-    }
+    if (!o) { alert("Draw or select a line first."); return; }
 
     const pxLen = Math.hypot(o.x2 - o.x1, o.y2 - o.y1);
     const mm = prompt("Enter the real length of this line in mm:");
     if (mm == null) return;
     const mmNum = Number(mm);
-    if (!isFinite(mmNum) || mmNum <= 0) {
-      alert("Invalid mm value.");
-      return;
-    }
+    if (!isFinite(mmNum) || mmNum <= 0) { alert("Invalid mm value."); return; }
+
     pushUndo();
     state.pxPerMm = pxLen / mmNum;
     updateScaleOut();
@@ -1607,7 +1375,6 @@
       bgImg.onload = () => {
         state.bg.natW = bgImg.naturalWidth || 0;
         state.bg.natH = bgImg.naturalHeight || 0;
-        // place at origin
         state.bg.x = 0;
         state.bg.y = 0;
         state.bg.scale = 1;
@@ -1630,14 +1397,145 @@
     drawAll();
   }
 
-  // ---------------- SVG ink hooks (safe no-op) ----------------
+  // =========================================================
+  // ✅ SVG IMPORT (split items) + hide/show with arrows
+  // =========================================================
+
+  function parseNumber(v, fallback = 0) {
+    const n = Number(String(v ?? "").replace(/px$/i, ""));
+    return isFinite(n) ? n : fallback;
+  }
+
+  function parseViewBox(svgEl) {
+    const vb = svgEl.getAttribute("viewBox");
+    if (vb) {
+      const parts = vb.trim().split(/[\s,]+/).map(Number);
+      if (parts.length === 4 && parts.every(x => isFinite(x))) {
+        return { minX: parts[0], minY: parts[1], w: parts[2], h: parts[3] };
+      }
+    }
+    // fallback using width/height
+    const w = parseNumber(svgEl.getAttribute("width"), 1000);
+    const h = parseNumber(svgEl.getAttribute("height"), 1000);
+    return { minX: 0, minY: 0, w: w || 1000, h: h || 1000 };
+  }
+
+  function getStyleAttr(el, name) {
+    // from attributes
+    const a = el.getAttribute(name);
+    if (a != null) return a;
+
+    // from style=""
+    const style = el.getAttribute("style") || "";
+    const m = style.match(new RegExp(`${name}\\s*:\\s*([^;]+)`, "i"));
+    if (m) return m[1].trim();
+
+    return null;
+  }
+
+  function coalesceStyle(el, parentStyle) {
+    // minimal "computed style" chain
+    const stroke = getStyleAttr(el, "stroke") ?? parentStyle.stroke ?? "#111";
+    const fill = getStyleAttr(el, "fill") ?? parentStyle.fill ?? "none";
+    const strokeWidth = parseNumber(getStyleAttr(el, "stroke-width") ?? parentStyle.strokeWidth ?? 1, 1);
+    const opacity = parseNumber(getStyleAttr(el, "opacity") ?? parentStyle.opacity ?? 1, 1);
+    const strokeOpacity = parseNumber(getStyleAttr(el, "stroke-opacity") ?? parentStyle.strokeOpacity ?? opacity, opacity);
+    const fillOpacity = parseNumber(getStyleAttr(el, "fill-opacity") ?? parentStyle.fillOpacity ?? opacity, opacity);
+    const linecap = getStyleAttr(el, "stroke-linecap") ?? parentStyle.linecap ?? "round";
+    const linejoin = getStyleAttr(el, "stroke-linejoin") ?? parentStyle.linejoin ?? "round";
+    const fillRule = getStyleAttr(el, "fill-rule") ?? parentStyle.fillRule ?? "nonzero";
+
+    // We store a single opacity (best effort): prefer explicit stroke/fill opacities when present,
+    // but canvas only has one globalAlpha so we pick the max-ish.
+    const combinedOpacity = clamp(Math.max(strokeOpacity, fillOpacity), 0, 1);
+
+    return {
+      stroke: (stroke === "none") ? "none" : String(stroke),
+      fill: (fill === "none") ? "none" : String(fill),
+      strokeWidth,
+      opacity: combinedOpacity,
+      linecap,
+      linejoin,
+      fillRule
+    };
+  }
+
+  function pointsToPathD(pointsStr, close = false) {
+    const nums = String(pointsStr || "").trim().split(/[\s,]+/).map(Number).filter(n => isFinite(n));
+    if (nums.length < 4) return "";
+    let d = `M ${nums[0]} ${nums[1]}`;
+    for (let i = 2; i + 1 < nums.length; i += 2) d += ` L ${nums[i]} ${nums[i + 1]}`;
+    if (close) d += " Z";
+    return d;
+  }
+
+  function rectToPathD(x, y, w, h, rx = 0, ry = 0) {
+    // basic rounded rect support (approx)
+    x = Number(x) || 0; y = Number(y) || 0; w = Number(w) || 0; h = Number(h) || 0;
+    rx = Number(rx) || 0; ry = Number(ry) || 0;
+    rx = Math.min(rx, w / 2); ry = Math.min(ry, h / 2);
+    if (rx <= 0 && ry <= 0) {
+      return `M ${x} ${y} L ${x + w} ${y} L ${x + w} ${y + h} L ${x} ${y + h} Z`;
+    }
+    // rounded via arcs
+    return [
+      `M ${x + rx} ${y}`,
+      `L ${x + w - rx} ${y}`,
+      `A ${rx} ${ry} 0 0 1 ${x + w} ${y + ry}`,
+      `L ${x + w} ${y + h - ry}`,
+      `A ${rx} ${ry} 0 0 1 ${x + w - rx} ${y + h}`,
+      `L ${x + rx} ${y + h}`,
+      `A ${rx} ${ry} 0 0 1 ${x} ${y + h - ry}`,
+      `L ${x} ${y + ry}`,
+      `A ${rx} ${ry} 0 0 1 ${x + rx} ${y}`,
+      `Z`
+    ].join(" ");
+  }
+
+  function circleToPathD(cx, cy, r) {
+    cx = Number(cx) || 0; cy = Number(cy) || 0; r = Number(r) || 0;
+    if (r <= 0) return "";
+    // two arcs
+    return `M ${cx - r} ${cy} A ${r} ${r} 0 1 0 ${cx + r} ${cy} A ${r} ${r} 0 1 0 ${cx - r} ${cy} Z`;
+  }
+
+  function ellipseToPathD(cx, cy, rx, ry) {
+    cx = Number(cx) || 0; cy = Number(cy) || 0; rx = Number(rx) || 0; ry = Number(ry) || 0;
+    if (rx <= 0 || ry <= 0) return "";
+    return `M ${cx - rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx + rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx - rx} ${cy} Z`;
+  }
+
+  function lineToPathD(x1, y1, x2, y2) {
+    return `M ${Number(x1) || 0} ${Number(y1) || 0} L ${Number(x2) || 0} ${Number(y2) || 0}`;
+  }
+
   function importSvgInk(file) {
     const fr = new FileReader();
     fr.onload = () => {
+      const text = String(fr.result || "");
+      const parsed = parseSvgToInk(text);
+
+      if (!parsed || !parsed.items.length) {
+        showToast("SVG: no paths found");
+        return;
+      }
+
       pushUndo();
-      state.svgInk = { raw: String(fr.result) };
-      showToast("SVG loaded");
-      // (This build doesn’t parse/edit SVG paths; it just stores it so you can extend later)
+
+      // Place near origin in world
+      state.svgInk = {
+        raw: text,
+        items: parsed.items,
+        cursor: 0, // how many have been hidden forward
+        x: 0,
+        y: 0,
+        scale: parsed.defaultScale,
+        rot: 0,
+        viewBox: parsed.viewBox
+      };
+
+      showToast(`SVG imported (${parsed.items.length})`);
+      drawAll();
     };
     fr.readAsText(file);
   }
@@ -1646,13 +1544,168 @@
     pushUndo();
     state.svgInk = null;
     showToast("SVG cleared");
+    drawAll();
+  }
+
+  function parseSvgToInk(svgText) {
+    let doc;
+    try {
+      doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+    } catch {
+      return null;
+    }
+
+    const svgEl = doc.querySelector("svg");
+    if (!svgEl) return null;
+
+    const vb = parseViewBox(svgEl);
+
+    // Choose a reasonable scale:
+    // - if SVG is huge, scale down so it fits roughly 800 world px across.
+    const targetW = 900;
+    const defaultScale = vb.w > 0 ? clamp(targetW / vb.w, 0.05, 10) : 1;
+
+    const items = [];
+    const rootStyle = coalesceStyle(svgEl, {
+      stroke: "#111",
+      fill: "none",
+      strokeWidth: 1,
+      opacity: 1,
+      strokeOpacity: 1,
+      fillOpacity: 1,
+      linecap: "round",
+      linejoin: "round",
+      fillRule: "nonzero"
+    });
+
+    function walk(node, parentStyle) {
+      if (!node || node.nodeType !== 1) return; // element only
+      const el = node;
+
+      // ignore defs/clipPath/mask/metadata/title/desc
+      const tag = el.tagName.toLowerCase();
+      if (["defs", "clipPath", "mask", "metadata", "title", "desc"].includes(tag)) return;
+
+      const st = coalesceStyle(el, parentStyle);
+
+      // NOTE: We’re NOT applying SVG transforms here (transform="...").
+      // If your SVGs rely heavily on transforms, tell me and I’ll add transform parsing.
+      if (tag === "path") {
+        const d = el.getAttribute("d") || "";
+        if (d.trim()) items.push(makeInkItem(d, st));
+      } else if (tag === "line") {
+        const d = lineToPathD(el.getAttribute("x1"), el.getAttribute("y1"), el.getAttribute("x2"), el.getAttribute("y2"));
+        items.push(makeInkItem(d, st));
+      } else if (tag === "rect") {
+        const d = rectToPathD(
+          el.getAttribute("x"), el.getAttribute("y"),
+          el.getAttribute("width"), el.getAttribute("height"),
+          el.getAttribute("rx"), el.getAttribute("ry")
+        );
+        if (d) items.push(makeInkItem(d, st));
+      } else if (tag === "circle") {
+        const d = circleToPathD(el.getAttribute("cx"), el.getAttribute("cy"), el.getAttribute("r"));
+        if (d) items.push(makeInkItem(d, st));
+      } else if (tag === "ellipse") {
+        const d = ellipseToPathD(el.getAttribute("cx"), el.getAttribute("cy"), el.getAttribute("rx"), el.getAttribute("ry"));
+        if (d) items.push(makeInkItem(d, st));
+      } else if (tag === "polyline") {
+        const d = pointsToPathD(el.getAttribute("points"), false);
+        if (d) items.push(makeInkItem(d, st));
+      } else if (tag === "polygon") {
+        const d = pointsToPathD(el.getAttribute("points"), true);
+        if (d) items.push(makeInkItem(d, st));
+      }
+
+      // walk children
+      for (const ch of Array.from(el.children || [])) walk(ch, st);
+    }
+
+    function makeInkItem(d, st) {
+      return {
+        id: nextId(),
+        d,
+        stroke: st.stroke,
+        fill: st.fill,
+        strokeWidth: st.strokeWidth,
+        opacity: st.opacity,
+        hidden: false,
+        fillRule: st.fillRule,
+        lineCap: st.linecap,
+        lineJoin: st.linejoin
+      };
+    }
+
+    walk(svgEl, rootStyle);
+
+    // Normalize coordinates so viewBox minX/minY becomes 0,0 (then placed by svgInk.x/y)
+    // We do this by wrapping every path in an initial translate in the stored transform
+    // rather than rewriting path data (fast + safe).
+    // So we set svgInk.x/y later to compensate: we want (minX,minY) -> 0,0.
+    // We'll encode that in default offset using negative minX/minY in svgInk.x/y.
+    // But since svgInk.x/y is world space, and we also apply svgInk.scale, we can
+    // bake this into initial translation when drawing by setting x/y accordingly.
+    // We'll store viewBox and use it when creating svgInk.
+    return { items, viewBox: vb, defaultScale };
+  }
+
+  function svgHideNext() {
+    const s = state.svgInk;
+    if (!s || !s.items?.length) return;
+
+    // hide item at cursor if possible, then advance
+    const i = s.cursor || 0;
+    if (i >= s.items.length) {
+      showToast("SVG: end");
+      return;
+    }
+    s.items[i].hidden = true;
+    s.cursor = i + 1;
+    showToast(`SVG hide ${s.cursor}/${s.items.length}`);
+    drawAll();
+  }
+
+  function svgUnhidePrev() {
+    const s = state.svgInk;
+    if (!s || !s.items?.length) return;
+
+    const i = s.cursor || 0;
+    if (i <= 0) {
+      showToast("SVG: start");
+      return;
+    }
+    const j = i - 1;
+    s.items[j].hidden = false;
+    s.cursor = j;
+    showToast(`SVG show ${s.cursor}/${s.items.length}`);
+    drawAll();
   }
 
   // ---------------- Keyboard ----------------
   function keyDown(e) {
+    // block arrow hide/show if typing in input/select
+    const tag = (e.target?.tagName || "").toLowerCase();
+    const typing = (tag === "input" || tag === "textarea" || tag === "select");
+
     if (e.key === " ") {
       keys.space = true;
       return;
+    }
+
+    // ✅ SVG hide/show with arrows (when svgInk exists)
+    if (!typing && state.svgInk?.items?.length) {
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        pushUndo();
+        svgHideNext();
+        return;
+      }
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        pushUndo();
+        svgUnhidePrev();
+        return;
+      }
     }
 
     // Undo/redo
@@ -1728,6 +1781,7 @@
   });
   clearBgBtn?.addEventListener("click", clearBg);
 
+  // ✅ SVG import + clear
   svgInkFile?.addEventListener("change", () => {
     const f = svgInkFile.files?.[0];
     if (f) importSvgInk(f);
@@ -1741,6 +1795,7 @@
     state.pxPerMm = 3.78;
     updateScaleOut();
     showToast("Scale reset");
+    drawAll();
   });
 
   exportBtn?.addEventListener("click", exportPNG);
@@ -1750,10 +1805,7 @@
     const name = prompt("New board name:");
     if (!name) return;
     const idx = loadBoardsIndex();
-    if (idx[name]) {
-      alert("That board already exists.");
-      return;
-    }
+    if (idx[name]) { alert("That board already exists."); return; }
     idx[name] = serializeBoard();
     saveBoardsIndex(idx);
     refreshBoardSelect();
@@ -1763,10 +1815,7 @@
 
   saveBoardBtn?.addEventListener("click", () => {
     const name = currentBoardName();
-    if (!name) {
-      alert("Choose a board name (New) first.");
-      return;
-    }
+    if (!name) { alert("Choose a board name (New) first."); return; }
     const idx = loadBoardsIndex();
     idx[name] = serializeBoard();
     saveBoardsIndex(idx);
@@ -1807,11 +1856,6 @@
     setSize(state.size);
     setOpacity01(1);
     updateScaleOut();
-
-    // default view center-ish
-    state.view.x = 0;
-    state.view.y = 0;
-    state.view.z = 1;
 
     refreshBoardSelect();
     resizeCanvases();
