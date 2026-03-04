@@ -3151,12 +3151,10 @@ if (!parts.length && !pendingBg) {
       state.zoom = cam.zoom;
       state.panX = cam.panX;
       state.panY = cam.panY;
-    }else {
-  // ✅ NEW: ensure imported ink/bg fits viewport
-  fitCameraToBounds(boundsOfAllContent(), 0.08);
-}
+    }
 
     redrawAll();
+      fitCameraToBounds(boundsOfAllContent(), 0.08);
     showToast(`SVG imported: 0/${svgReveal.partIndices.length} (→ reveal)`);
   }
 
