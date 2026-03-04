@@ -2710,6 +2710,9 @@ if (k === "rect" || k === "circle") {
 
       applyBgTransform();
       redrawAll();
+       // ✅ NEW: camera fits background
+fitCameraToBounds(boundsOfBackground() || boundsOfAllContent(), 0.08);
+
       showToast("Background loaded");
     };
     img.onerror = () => showToast("Paste failed");
@@ -2748,6 +2751,8 @@ if (k === "rect" || k === "circle") {
 
         applyBgTransform();
         redrawAll();
+         // ✅ NEW: camera fits background
+fitCameraToBounds(boundsOfBackground() || boundsOfAllContent(), 0.08);
         showToast("Background loaded");
       };
       img.src = String(reader.result || "");
@@ -3146,7 +3151,10 @@ if (!parts.length && !pendingBg) {
       state.zoom = cam.zoom;
       state.panX = cam.panX;
       state.panY = cam.panY;
-    }
+    }else {
+  // ✅ NEW: ensure imported ink/bg fits viewport
+  fitCameraToBounds(boundsOfAllContent(), 0.08);
+}
 
     redrawAll();
     showToast(`SVG imported: 0/${svgReveal.partIndices.length} (→ reveal)`);
