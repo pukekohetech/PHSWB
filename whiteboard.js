@@ -2642,11 +2642,252 @@
       const op = isFinite(opA) ? opA : (isFinite(opB) ? opB : 1);
       const opacity = clamp(op, 0, 1);
 
-      if (tag === "line") {
-        const x1 = parseNumberAttr(el.getAttribute("x1")) ?? 0;
-        const y1 = parseNumberAttr(el.getAttribute("y1")) ?? 0;
-        const x2 = parseNumberAttr(el.getAttribute("x2")) ?? 0;
-        const y2 = parseNumberAttr(el.getAttribute("y2")) ?? 0;
-        const p1 = mapCTM(el, x1, y1);
-        const p2 = mapCTM(el, x2, y2);
-        pushPart({ kind: "line", color: stroke, size, opacity, x1: p1.x, y1: p1.y, x2: p2
+       if (tag === "line") {
+    const x1 = parseNumberAttr(el.getAttribute("x1")) ?? 0;
+    const y1 = parseNumberAttr(el.getAttribute("y1")) ?? 0;
+    const x2 = parseNumberAttr(el.getAttribute("x2")) ?? 0;
+    const y2 = parseNumberAttr(el.getAttribute("y2")) ?? 0;
+    const p1 = mapCTM(el, x1, y1);
+    const p2 = mapCTM(el, x2, y2);
+
+    pushPart(
+      { kind: "line", color: stroke, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 },
+      [p1, p2]
+    );
+    continue;
+  }
+
+  if (tag === "rect") {
+    const x = parseNumberAttr(el.getAttribute("x")) ?? 0;
+    const y = parseNumberAttr(el.getAttribute("y")) ?? 0;
+    const w = parseNumberAttr(el.getAttribute("width")) ?? 0;
+    const h = parseNumberAttr(el.getAttribute("height")) ?? 0;
+
+    const p1 = mapCTM(el, x, y);
+    const p2 = mapCTM(el, x + w, y + h);
+
+    pushPart(
+      { kind: "rect", color: stroke, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 },
+      [p1, p2]
+    );
+    continue;
+  }
+
+  if (tag === "circle") {
+    const cx = parseNumberAttr(el.getAttribute("cx")) ?? 0;
+    const cy = parseNumberAttr(el.getAttribute("cy")) ?? 0;
+    const r = parseNumberAttr(el.getAttribute("r")) ?? 0;
+
+    const p1 = mapCTM(el, cx - r, cy - r);
+    const p2 = mapCTM(el, cx + r, cy + r);
+
+    pushPart(
+      { kind: "circle", color: stroke, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 },
+      [p1, p2]
+    );
+    continue;
+  }
+
+  if (tag === "ellipse") {
+    const cx = parseNumberAttr(el.getAttribute("cx")) ?? 0;
+    const cy = parseNumberAttr(el.getAttribute("cy")) ?? 0;
+    const rx = parseNumberAttr(el.getAttribute("rx")) ?? 0;
+    const ry = parseNumberAttr(el.getAttribute("ry")) ?? 0;
+
+    const p1 = mapCTM(el, cx - rx, cy - ry);
+    const p2 = mapCTM(el, cx + rx, cy + ry);
+
+    // represent ellipse as kind:"circle" (your engine treats circle as ellipse via x1..y2 box)
+    pushPart(
+      { kind: "circle", color: stroke, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 },
+      [p1, p2]
+    );
+    continue;
+  }
+
+  // Text intentionally skipped in your “best” version (prevents import breakage)
+  if (tag === "text") {
+    continue;
+  }
+
+  if (tag === "polyline" || tag === "polygon") {
+    const ptsAttr = (el.getAttribute("points") || "").trim();
+    if (!ptsAttr) continue;
+
+    const nums = ptsAttr.split(/[\s,]+/).map(Number).filter((n) => isFinite(n));
+    if (nums.length < 4) continue;
+
+    const pts = [];
+    for (let i = 0; i < nums.length - 1; i += 2) pts.push(mapCTM(el, nums[i], nums[i + 1]));
+    if (tag === "polygon" && pts.length) pts.push({ ...pts[0] });
+
+    pushPart({ kind: "stroke", color: stroke, size, opacity, points: pts }, pts.slice(0, 12));
+    continue;
+  }
+
+  if (tag === "path") {
+    if (!el.getTotalLength) continue;
+
+    let total = 0;
+    try { total = el.getTotalLength(); } catch { total = 0; }
+    if (!isFinite(total) || total <= 0) continue;
+
+    // Dense sampling makes arc-paths look good
+    const steps = Math.max(60, Math.min(420, Math.ceil(total / 3)));
+
+    const pts = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = (i / steps) * total;
+      let p = null;
+      try { p = el.getPointAtLength(t); } catch { p = null; }
+      if (!p) continue;
+      pts.push(mapCTM(el, p.x, p.y));
+    }
+    if (pts.length < 2) continue;
+
+    pushPart({ kind: "stroke", color: stroke, size, opacity, points: pts }, pts.slice(0, 12));
+    continue;
+  }
+} // <-- end for (const el of els)
+
+// ---- done collecting parts ----
+if (!parts.length && !pendingBg) {
+  showToast("No supported SVG shapes");
+  return;
+}
+
+// ---- Bounds (for recenter/scale) ----
+let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+const use = boundsPts.length
+  ? boundsPts
+  : [
+      { x: rootBox.x, y: rootBox.y },
+      { x: rootBox.x + rootBox.w, y: rootBox.y + rootBox.h }
+    ];
+for (const p of use) {
+  minX = Math.min(minX, p.x);
+  minY = Math.min(minY, p.y);
+  maxX = Math.max(maxX, p.x);
+  maxY = Math.max(maxY, p.y);
+}
+
+const bw = Math.max(1, maxX - minX);
+const bh = Math.max(1, maxY - minY);
+
+let viewCenter = screenToWorld(state.viewW / 2, state.viewH / 2);
+let s = clamp(
+  Math.min(((state.viewW / state.zoom) * 0.9) / bw, ((state.viewH / state.zoom) * 0.9) / bh),
+  0.02,
+  50
+);
+
+let cx0 = minX + bw / 2;
+let cy0 = minY + bh / 2;
+
+if (isRoundTrip) {
+  // Keep original world coords, no refit/recenter
+  viewCenter = { x: 0, y: 0 };
+  s = 1;
+  cx0 = 0;
+  cy0 = 0;
+}
+
+const groupId = "svg_" + Date.now();
+
+pushUndo();
+clearRedo();
+hardResetGesture();
+
+// ---- Apply SAME recenter/scale to background image (so bg + ink align) ----
+if (pendingBg) {
+  state.bg.src = pendingBg.src;
+  state.bg.natW = pendingBg.natW;
+  state.bg.natH = pendingBg.natH;
+
+  state.bg.rot = pendingBg.rot;
+  state.bg.scale = pendingBg.scale * s;
+
+  // map the image's top-left (world coords) through the same transform
+  state.bg.x = viewCenter.x + (pendingBg.x - cx0) * s;
+  state.bg.y = viewCenter.y + (pendingBg.y - cy0) * s;
+
+  bgImg.src = state.bg.src;
+  applyBgTransform();
+}
+
+const startIndex = state.objects.length;
+
+for (const o of parts) {
+  const obj = JSON.parse(JSON.stringify(o));
+  obj.svgGroupId = groupId;
+  obj.hidden = true;
+
+  if (obj.kind === "stroke" || obj.kind === "erase") {
+    obj.points = (obj.points || []).map((p) => ({
+      x: viewCenter.x + (p.x - cx0) * s,
+      y: viewCenter.y + (p.y - cy0) * s
+    }));
+  } else {
+    obj.x1 = viewCenter.x + (obj.x1 - cx0) * s;
+    obj.y1 = viewCenter.y + (obj.y1 - cy0) * s;
+    obj.x2 = viewCenter.x + (obj.x2 - cx0) * s;
+    obj.y2 = viewCenter.y + (obj.y2 - cy0) * s;
+  }
+
+  state.objects.push(obj);
+}
+
+svgReveal.active = true;
+svgReveal.groupId = groupId;
+svgReveal.partIndices = [];
+svgReveal.revealed = 0;
+for (let i = startIndex; i < state.objects.length; i++) svgReveal.partIndices.push(i);
+
+state.selectionIndex = -1;
+setActiveTool("select");
+
+if (isRoundTrip) {
+  state.zoom = cam.zoom;
+  state.panX = cam.panX;
+  state.panY = cam.panY;
+  autoFitIfNeeded();
+} else {
+  fitCameraToBounds(boundsOfBackground() || boundsOfAllContent(), 0.08);
+}
+
+redrawAll();
+showToast(`SVG imported: 0/${svgReveal.partIndices.length} (→ reveal)`);
+} // <-- end importSvgInkFromText()
+
+function clearImportedSvgInk() {
+  if (!svgReveal.active || !svgReveal.groupId) {
+    showToast("No SVG ink");
+    return;
+  }
+  pushUndo();
+  clearRedo();
+  const gid = svgReveal.groupId;
+  state.objects = state.objects.filter((o) => !(o && o.svgGroupId === gid));
+  svgReveal.active = false;
+  svgReveal.groupId = null;
+  svgReveal.partIndices = [];
+  svgReveal.revealed = 0;
+  state.selectionIndex = -1;
+  redrawAll();
+  showToast("SVG cleared");
+}
+
+// Wire up UI if present
+if (svgInkFile) {
+  svgInkFile.addEventListener("change", () => {
+    const file = svgInkFile.files && svgInkFile.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => importSvgInkFromText(String(reader.result || ""));
+    reader.readAsText(file);
+    svgInkFile.value = "";
+  });
+}
+if (clearSvgInkBtn) {
+  clearSvgInkBtn.addEventListener("click", () => clearImportedSvgInk());
+}
