@@ -9,14 +9,13 @@
   <link rel="stylesheet" href="whiteboard.css" />
 </head>
 
-
-
+<body>
   <div class="toast" id="toast" aria-live="polite">Saved</div>
 
   <main class="wb">
     <!-- LEFT TOOL DOCK -->
     <aside class="dock" aria-label="Tools">
-      <!-- COLOUR (top icon) + brush size popover -->
+      <!-- COLOUR + brush size popover -->
       <div class="dockPopWrap">
         <button class="dockBtn dockBtn--swatch" id="colorBtn" title="Colour + Brush size">
           <span class="swatchLive" id="swatchLive" aria-hidden="true"></span>
@@ -32,6 +31,13 @@
             <label class="dockPop__label" for="brushSize">Brush size</label>
             <input id="brushSize" type="range" min="1" max="40" value="5" class="dockPop__range" />
             <span id="brushOut" class="dockPop__pill">5</span>
+          </div>
+
+          <!-- ✅ NEW: Opacity -->
+          <div class="dockPop__row">
+            <label class="dockPop__label" for="opacityRange">Opacity</label>
+            <input id="opacityRange" type="range" min="5" max="100" value="100" class="dockPop__range" />
+            <span id="opacityOut" class="dockPop__pill">100%</span>
           </div>
 
           <div class="dockPop__note">Shift: uniform scale • Shift (rotate): snap 15° • Delete: remove selected</div>
@@ -56,7 +62,7 @@
 
       <div class="dockSep"></div>
 
-      <!-- These act on selection if something is selected; otherwise they act on background -->
+      <!-- selection if selected; otherwise background -->
       <button class="dockBtn" data-tool="bgMove" title="Move selection / background">↔</button>
       <button class="dockBtn" data-tool="bgScale" title="Scale selection / background">⤡</button>
       <button class="dockBtn" data-tool="bgRotate" title="Rotate selection / background">⟲</button>
@@ -69,21 +75,15 @@
     <!-- STAGE -->
     <section class="stageWrap">
       <div class="stage" id="stage" aria-label="Whiteboard stage">
-        <!-- Background is DOM (no zoom artefacts) -->
         <div id="bgLayer" aria-hidden="true">
           <img id="bgImg" alt="" />
         </div>
 
-        <!-- Ink + UI canvases -->
         <canvas id="inkCanvas"></canvas>
         <canvas id="uiCanvas"></canvas>
 
-        <!-- floating gear -->
-        <button class="gearBtn" id="settingsBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Settings">
-          ⚙️
-        </button>
+        <button class="gearBtn" id="settingsBtn" type="button" aria-haspopup="true" aria-expanded="false" title="Settings">⚙️</button>
 
-        <!-- settings panel -->
         <div class="panel is-hidden" id="settingsPanel" role="dialog" aria-label="Whiteboard settings">
           <div class="panel__top">
             <div class="panel__title">Board Settings</div>
@@ -108,17 +108,15 @@
               <div class="panel__note">Use ↔ ⤡ ⟲ on the left (acts on selection if one is selected).</div>
             </div>
 
-            <!-- Optional (supported by whiteboard_arc_fixed.js): import SVG as editable "ink" -->
             <div class="panel__group panel__group--wide">
               <label class="panel__label" for="svgInkFile">Import SVG (ink)</label>
               <div class="panel__row" style="gap:8px; flex-wrap:wrap;">
                 <input id="svgInkFile" type="file" accept="image/svg+xml,.svg" class="panel__file" />
                 <button id="clearSvgInkBtn" class="panel__btn" type="button">Clear SVG</button>
               </div>
-              <div class="panel__note">Tip: after importing, use ← / → to hide/unhide SVG paths one-by-one (if enabled in your JS).</div>
+              <div class="panel__note">SVG import is optional; this JS keeps the hook but won’t break if unused.</div>
             </div>
 
-            
             <div class="panel__group panel__group--wide">
               <label class="panel__label">Scale</label>
               <div class="panel__row panel__row--wrap" style="gap:8px; flex-wrap:wrap;">
@@ -126,10 +124,10 @@
                 <button id="setScaleBtn" class="panel__btn" type="button">Set from line</button>
                 <button id="resetScaleBtn" class="panel__btn" type="button">Reset</button>
               </div>
-              <div class="panel__note">Draw a line (or select one), click “Set from line”, then enter its real length in mm.</div>
+              <div class="panel__note">Draw/select a line, click “Set from line”, enter its real length (mm).</div>
             </div>
 
-<div class="panel__group panel__group--wide">
+            <div class="panel__group panel__group--wide">
               <label class="panel__label">Boards</label>
               <div class="panel__row panel__row--wrap">
                 <select id="boardSelect" class="panel__select"></select>
@@ -153,12 +151,11 @@
       </div>
 
       <div class="hint">
-        Wheel zooms to cursor • Space+drag pans • Ctrl/Cmd snaps (varies by tool) • Ctrl/Cmd+Z undo • Ctrl/Cmd+Y redo • Delete removes selected
+        Wheel zooms • Space+drag pans • Ctrl/Cmd snaps • Ctrl/Cmd+Z undo • Ctrl/Cmd+Y redo • Delete removes selected
       </div>
     </section>
   </main>
 
-  <!-- IMPORTANT: load the ARC-enabled JS -->
   <script src="whiteboard.js"></script>
 </body>
 </html>
