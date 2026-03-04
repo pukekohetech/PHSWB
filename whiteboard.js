@@ -363,7 +363,7 @@ function fitCameraToBounds(b, padFrac = 0.08) {
 
   const z = clamp(
     Math.min((state.viewW - padX * 2) / bw, (state.viewH - padY * 2) / bh),
-    0.25,
+    0.05,
     6
   );
 
@@ -1010,7 +1010,7 @@ function setActiveTool(tool) {
   }
 
   function setZoomTo(newZoom, anchorSX, anchorSY) {
-    const z = clamp(newZoom, 0.25, 6);
+    const z = clamp(newZoom, 0.05, 6);
     const old = state.zoom;
 
     const worldX = (anchorSX - state.panX) / old;
@@ -3147,16 +3147,19 @@ if (!parts.length && !pendingBg) {
     state.selectionIndex = -1;
     setActiveTool("select");
 
-    if (isRoundTrip) {
-      state.zoom = cam.zoom;
-      state.panX = cam.panX;
-      state.panY = cam.panY;
-    }
+  if (isRoundTrip) {
+  state.zoom = cam.zoom;
+  state.panX = cam.panX;
+  state.panY = cam.panY;
 
-    redrawAll();
-     fitCameraToBounds(boundsOfBackground() || boundsOfAllContent(), 0.08);
-    //  fitCameraToBounds(boundsOfAllContent(), 0.08);
-    showToast(`SVG imported: 0/${svgReveal.partIndices.length} (→ reveal)`);
+  // ✅ If round-trip camera doesn't fit on smaller screens, refit anyway
+  autoFitIfNeeded();
+} else {
+  fitCameraToBounds(boundsOfBackground() || boundsOfAllContent(), 0.08);
+}
+
+redrawAll();
+showToast(`SVG imported: 0/${svgReveal.partIndices.length} (→ reveal)`);
   }
 
   function clearImportedSvgInk() {
