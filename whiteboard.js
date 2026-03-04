@@ -54,6 +54,14 @@
   const brushOut = document.getElementById("brushOut");
   const swatchLive = document.getElementById("swatchLive");
 
+  // Opacity controls (stroke)
+  const opacityRange = document.getElementById("opacityRange");
+  const opacityOut = document.getElementById("opacityOut");
+
+  // Background opacity controls
+  const bgOpacity = document.getElementById("bgOpacity");
+  const bgOpacityOut = document.getElementById("bgOpacityOut");
+
   const settingsBtn = document.getElementById("settingsBtn");
   const settingsPanel = document.getElementById("settingsPanel");
   const settingsCloseBtn = document.getElementById("settingsCloseBtn");
@@ -164,7 +172,7 @@
     title: "",
     pxPerMm: DEFAULT_PX_PER_MM,
 
-    bg: { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0 },
+    bg: { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0, opacity: 1 },
 
     objects: [],
     undo: [],
@@ -354,6 +362,7 @@
       tool: state.tool,
       color: state.color,
       size: state.size,
+      opacity: state.opacity,
       zoom: state.zoom,
       panX: state.panX,
       panY: state.panY,
@@ -370,6 +379,8 @@
 
     setColor(snap.color || "#111111");
     setBrushSize(snap.size || 5);
+
+    setStrokeOpacity(snap.opacity ?? 1);
 
     state.zoom = Number(snap.zoom || 1);
     state.panX = Number(snap.panX || 0);
@@ -416,6 +427,9 @@
   ========================= */
   function applyBgTransform() {
     bgLayer.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+
+    // Background opacity lives on the layer
+    bgLayer.style.opacity = String(clamp(Number(state.bg.opacity ?? 1), 0, 1));
 
     if (!state.bg.src) {
       bgImg.style.display = "none";
@@ -464,9 +478,29 @@
     inkCtx.lineCap = "round";
     inkCtx.lineJoin = "round";
 
-    if (obj.kind === "stroke" || obj.kind === "erase") {
-      inkCtx.globalCompositeOperation = obj.kind === "erase" ? "destination-out" : "source-over";
-      inkCtx.strokeStyle = obj.kind === "erase" ? "rgba(0,0,0,1)" : obj.color;
+    // per-object opacity (eraser stays fully opaque)
+    const objAlpha = clamp(Number(obj.opacity ?? 1), 0, 1);
+
+    if (obj.kind === "stroke") {
+      inkCtx.globalCompositeOperation = "source-over";
+      inkCtx.globalAlpha = objAlpha;
+      inkCtx.strokeStyle = obj.color;
+      inkCtx.lineWidth = obj.size;
+      inkCtx.beginPath();
+      const pts = obj.points || [];
+      if (pts.length) {
+        inkCtx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) inkCtx.lineTo(pts[i].x, pts[i].y);
+      }
+      inkCtx.stroke();
+      inkCtx.restore();
+      return;
+    }
+
+    if (obj.kind === "erase") {
+      inkCtx.globalCompositeOperation = "destination-out";
+      inkCtx.globalAlpha = 1;
+      inkCtx.strokeStyle = "rgba(0,0,0,1)";
       inkCtx.lineWidth = obj.size;
       inkCtx.beginPath();
       const pts = obj.points || [];
@@ -481,6 +515,7 @@
 
     if (obj.kind === "text") {
       inkCtx.globalCompositeOperation = "source-over";
+      inkCtx.globalAlpha = objAlpha;
       inkCtx.fillStyle = obj.color;
       inkCtx.textBaseline = "top";
       const m = textMetrics(obj);
@@ -499,6 +534,7 @@
     }
 
     inkCtx.globalCompositeOperation = "source-over";
+    inkCtx.globalAlpha = objAlpha;
     inkCtx.strokeStyle = obj.color;
     inkCtx.lineWidth = obj.size;
 
@@ -554,6 +590,7 @@
 
     inkCtx.restore();
   }
+
 
   function drawInk() {
     clearCtx(inkCtx, inkCanvas);
@@ -1077,6 +1114,30 @@
     scaleOut.textContent = `1 mm = ${pxPerMm().toFixed(3)} px`;
   }
 
+  function updateOpacityOut() {
+    if (!opacityOut) return;
+    opacityOut.textContent = `${Math.round(state.opacity * 100)}%`;
+  }
+
+  function setStrokeOpacity(v) {
+    state.opacity = clamp(Number(v), 0.05, 1);
+    if (opacityRange) opacityRange.value = String(state.opacity);
+    updateOpacityOut();
+  }
+
+  function updateBgOpacityOut() {
+    if (!bgOpacityOut) return;
+    bgOpacityOut.textContent = `${Math.round(clamp(Number(state.bg.opacity ?? 1), 0, 1) * 100)}%`;
+  }
+
+  function setBackgroundOpacity(v) {
+    state.bg.opacity = clamp(Number(v), 0, 1);
+    if (bgOpacity) bgOpacity.value = String(state.bg.opacity);
+    updateBgOpacityOut();
+    applyBgTransform();
+    redrawAll();
+  }
+
   function updateCursorFromTool() {
     const t = state.tool;
     if (["pen", "line", "rect", "circle", "arc", "arrow"].includes(t)) { inkCanvas.style.cursor = "crosshair"; return; }
@@ -1459,7 +1520,8 @@
         text: String(text),
         color: state.color,
         fontSize: Math.max(14, Math.round(state.size * 4)),
-        rot: 0
+        rot: 0,
+        opacity: state.opacity
       });
       state.selectionIndex = state.objects.length - 1;
       setActiveTool("select");
@@ -1520,7 +1582,7 @@
       let r = Math.hypot(p1.x - cx, p1.y - cy);
       r = Math.max(1, Math.round(r / pxPerMm()) * pxPerMm());
 
-      const obj = { kind: "arc", color: state.color, size: state.size, cx, cy, r, a1, a2: a1, ccw: false };
+      const obj = { kind: "arc", color: state.color, size: state.size, opacity: state.opacity, cx, cy, r, a1, a2: a1, ccw: false };
       state.objects.push(obj);
 
       gesture.activeObj = obj;
@@ -1541,7 +1603,7 @@
     state.selectionIndex = -1;
 
     if (state.tool === "pen") {
-      const obj = { kind: "stroke", color: state.color, size: state.size, points: [w] };
+      const obj = { kind: "stroke", color: state.color, size: state.size, opacity: state.opacity, points: [w] };
       state.objects.push(obj);
       gesture.activeObj = obj;
       gesture.mode = "drawStroke";
@@ -1565,7 +1627,7 @@
       let p0 = snapPointPreferEndsIntersections(w);
       if (!p0) p0 = snapToMmGridWorld(w);
 
-      const obj = { kind: state.tool, color: state.color, size: state.size, x1: p0.x, y1: p0.y, x2: p0.x, y2: p0.y, rot: 0 };
+      const obj = { kind: state.tool, color: state.color, size: state.size, opacity: state.opacity, x1: p0.x, y1: p0.y, x2: p0.x, y2: p0.y, rot: 0 };
       state.objects.push(obj);
       gesture.activeObj = obj;
       gesture.mode = "drawShape";
@@ -1881,6 +1943,22 @@
   colorInput?.addEventListener("input", () => setColor(colorInput.value));
   brushSize?.addEventListener("input", () => setBrushSize(brushSize.value));
 
+  // Stroke opacity UI (optional; only if your HTML includes these elements)
+  if (opacityRange) opacityRange.value = String(state.opacity);
+  updateOpacityOut();
+  opacityRange?.addEventListener("input", () => {
+    setStrokeOpacity(opacityRange.value);
+    showToast(`Opacity ${Math.round(state.opacity * 100)}%`);
+  });
+
+  // Background opacity UI (optional)
+  if (bgOpacity) bgOpacity.value = String(clamp(Number(state.bg.opacity ?? 1), 0, 1));
+  updateBgOpacityOut();
+  bgOpacity?.addEventListener("input", () => {
+    setBackgroundOpacity(bgOpacity.value);
+    showToast(`BG opacity ${Math.round(clamp(Number(state.bg.opacity ?? 1), 0, 1) * 100)}%`);
+  });
+
   function openSettings(open) {
     const isOpen = open ?? settingsPanel.classList.contains("is-hidden");
     settingsPanel.classList.toggle("is-hidden", !isOpen);
@@ -1970,7 +2048,7 @@
   clearBgBtn?.addEventListener("click", () => {
     pushUndo(); clearRedo();
     hardResetGesture();
-    state.bg = { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0 };
+    state.bg = { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0, opacity: state.bg.opacity ?? 1 };
     bgImg.removeAttribute("src");
     redrawAll();
   });
@@ -2250,12 +2328,13 @@
       tool: "pen",
       color: state.color || "#111111",
       size: state.size || 5,
+      opacity: state.opacity ?? 1,
       zoom: 0.25,
       panX: state.viewW / 2,
       panY: state.viewH / 2,
       title: "",
       pxPerMm: state.pxPerMm || DEFAULT_PX_PER_MM,
-      bg: { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0 },
+      bg: { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0, opacity: state.bg.opacity ?? 1 },
       objects: []
     };
   }
@@ -2398,7 +2477,7 @@
         `scale(${state.bg.scale.toFixed(6)})`,
         `translate(${(-cx).toFixed(3)} ${(-cy).toFixed(3)})`
       ].join(" ");
-      bgMarkup = `<image href="${state.bg.src}" xlink:href="${state.bg.src}" x="0" y="0" width="${natW}" height="${natH}" transform="${t}" />`;
+      bgMarkup = `<image href="${state.bg.src}" xlink:href="${state.bg.src}" x="0" y="0" width="${natW}" height="${natH}" transform="${t}" opacity="${clamp(Number(state.bg.opacity ?? 1), 0, 1).toFixed(3)}" />`;
     }
 
     let defs = "";
@@ -2434,7 +2513,7 @@
       if (obj.kind === "stroke") {
         const d = pathFromPoints(obj.points || []);
         if (!d) continue;
-        currentLayer += `<path d="${d}" fill="none" stroke="${obj.color}" stroke-linecap="round" stroke-linejoin="round" stroke-width="${obj.size}"/>`;
+        currentLayer += `<path d="${d}" fill="none" stroke="${obj.color}" stroke-linecap="round" stroke-linejoin="round" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}"/>`;
         continue;
       }
 
@@ -2444,7 +2523,7 @@
         const cy = obj.y + m.h / 2;
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx.toFixed(3)} ${cy.toFixed(3)}) rotate(${ang.toFixed(6)}) translate(${(-m.w / 2).toFixed(3)} ${(-m.h / 2).toFixed(3)})`;
-        currentLayer += `<text x="0" y="0" transform="${t}" fill="${obj.color}" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-weight="700" font-size="${m.fontSize}">${svgEscape(obj.text || "")}</text>`;
+        currentLayer += `<text x="0" y="0" transform="${t}" fill="${obj.color}" opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-weight="700" font-size="${m.fontSize}">${svgEscape(obj.text || "")}</text>`;
         continue;
       }
 
@@ -2452,7 +2531,7 @@
       const w = x2 - x1, h = y2 - y1;
 
       if (obj.kind === "line") {
-        currentLayer += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-linecap="round" />`;
+        currentLayer += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" stroke-linecap="round" />`;
         continue;
       }
 
@@ -2465,7 +2544,7 @@
         const hy1 = y2 + Math.sin(a1) * headLen;
         const hx2 = x2 + Math.cos(a2) * headLen;
         const hy2 = y2 + Math.sin(a2) * headLen;
-        currentLayer += `<path d="M ${x1} ${y1} L ${x2} ${y2} M ${x2} ${y2} L ${hx1} ${hy1} M ${x2} ${y2} L ${hx2} ${hy2}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-linecap="round" stroke-linejoin="round" />`;
+        currentLayer += `<path d="M ${x1} ${y1} L ${x2} ${y2} M ${x2} ${y2} L ${hx1} ${hy1} M ${x2} ${y2} L ${hx2} ${hy2}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" stroke-linecap="round" stroke-linejoin="round" />`;
         continue;
       }
 
@@ -2474,7 +2553,7 @@
         const rw = Math.abs(w), rh = Math.abs(h);
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" />`;
+        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" />`;
         continue;
       }
 
@@ -2483,7 +2562,7 @@
         const rx = Math.abs(w) / 2, ry = Math.abs(h) / 2;
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" />`;
+        currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" />`;
         continue;
       }
 
@@ -2495,7 +2574,7 @@
         const rawSpanAbs = Math.abs(a2 - a1);
 
         if (rawSpanAbs >= TWO_PI - 1e-6) {
-          currentLayer += `<circle cx="${obj.cx}" cy="${obj.cy}" r="${obj.r}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" />`;
+          currentLayer += `<circle cx="${obj.cx}" cy="${obj.cy}" r="${obj.r}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" />`;
           continue;
         }
 
@@ -2508,7 +2587,7 @@
         const exp = obj.cx + Math.cos(a2) * obj.r;
         const eyp = obj.cy + Math.sin(a2) * obj.r;
 
-        currentLayer += `<path d="M ${sxp} ${syp} A ${obj.r} ${obj.r} 0 ${largeArc} ${sweep} ${exp} ${eyp}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-linecap="round" />`;
+        currentLayer += `<path d="M ${sxp} ${syp} A ${obj.r} ${obj.r} 0 ${largeArc} ${sweep} ${exp} ${eyp}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" stroke-linecap="round" />`;
         continue;
       }
     }
@@ -2555,6 +2634,7 @@
 
       octx.save();
       octx.translate(state.panX, state.panY);
+      octx.globalAlpha = clamp(Number(state.bg.opacity ?? 1), 0, 1);
       octx.scale(state.zoom, state.zoom);
 
       const natW = state.bg.natW;
@@ -2589,6 +2669,14 @@
   function parseNumberAttr(v) {
     const n = parseFloat(String(v || "").replace(/px$/, ""));
     return isFinite(n) ? n : null;
+  }
+
+  function attrOrStyle(el, attrName, cssProp) {
+    const a = el.getAttribute(attrName);
+    if (a != null) return a;
+    const style = el.getAttribute("style") || "";
+    const m = style.match(new RegExp(String(cssProp).replace(/[-/\^$*+?.()|[\]{}]/g, "\$&") + "\s*:\s*([^;]+)", "i"));
+    return m ? m[1].trim() : null;
   }
 
   function ensureHiddenSvgHost() {
@@ -2646,6 +2734,8 @@
       const href = imgEl.getAttribute("href") || imgEl.getAttribute("xlink:href") || "";
       const wAttr = parseNumberAttr(imgEl.getAttribute("width"));
       const hAttr = parseNumberAttr(imgEl.getAttribute("height"));
+      const opAttr = parseNumberAttr(attrOrStyle(imgEl, "opacity", "opacity"));
+      const imgOpacity = isFinite(opAttr) ? clamp(opAttr, 0, 1) : 1;
       if (href) {
         const tf = (imgEl.getAttribute("transform") || "").trim();
         let x = 0, y = 0, rot = 0, scale = 1;
@@ -2658,7 +2748,7 @@
           rot = ((parseFloat(m[5]) || 0) * Math.PI) / 180;
           scale = parseFloat(m[6]) || 1;
         }
-        pendingBg = { src: String(href), natW: wAttr ?? 0, natH: hAttr ?? 0, x, y, rot, scale };
+        pendingBg = { src: String(href), natW: wAttr ?? 0, natH: hAttr ?? 0, x, y, rot, scale, opacity: imgOpacity };
       }
     }
 
@@ -2694,6 +2784,11 @@
       const tag = el.tagName.toLowerCase();
       const stroke = el.getAttribute("stroke");
       const fill = el.getAttribute("fill");
+
+      const opA = parseNumberAttr(attrOrStyle(el, "stroke-opacity", "stroke-opacity"));
+      const opB = parseNumberAttr(attrOrStyle(el, "opacity", "opacity"));
+      const op = isFinite(opA) ? opA : (isFinite(opB) ? opB : 1);
+      const opacity = clamp(op, 0, 1);
 
       // ignore white fill-only background rects
       if (tag === "rect" && isNone(stroke) && (String(fill || "").toLowerCase() === "white" || !fill)) continue;
@@ -2797,6 +2892,7 @@
       state.bg.rot = pendingBg.rot;
       state.bg.scale = pendingBg.scale;
       bgImg.src = state.bg.src;
+      state.bg.opacity = pendingBg.opacity ?? 1;
     }
 
     const groupId = "svg_" + Date.now();
