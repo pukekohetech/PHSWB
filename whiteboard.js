@@ -3154,7 +3154,8 @@ if (!parts.length && !pendingBg) {
     }
 
     redrawAll();
-      fitCameraToBounds(boundsOfAllContent(), 0.08);
+     fitCameraToBounds(boundsOfBackground() || boundsOfAllContent(), 0.08);
+    //  fitCameraToBounds(boundsOfAllContent(), 0.08);
     showToast(`SVG imported: 0/${svgReveal.partIndices.length} (→ reveal)`);
   }
 
