@@ -37,6 +37,9 @@
   const bgLayer = document.getElementById("bgLayer");
   const bgImg = document.getElementById("bgImg");
 
+   // Cache raster fill canvases by object id (not saved; rebuilt on demand)
+const fillBitmapCache = new Map(); // id -> HTMLCanvasElement
+
   const inkCanvas = document.getElementById("inkCanvas");
   const uiCanvas = document.getElementById("uiCanvas");
   const inkCtx = inkCanvas.getContext("2d");
@@ -478,6 +481,31 @@ inkCtx.globalAlpha = (obj.opacity ?? 1);
 applyWorldTransform(inkCtx);
     inkCtx.lineCap = "round";
     inkCtx.lineJoin = "round";
+
+     if (obj.kind === "fillBitmap") {
+  inkCtx.globalCompositeOperation = "source-over";
+  inkCtx.globalAlpha = (obj.opacity ?? 1);
+
+  const id = ensureObjId(obj);
+  let c = fillBitmapCache.get(id);
+
+  if (!c || c.width !== obj.w || c.height !== obj.h) {
+    c = document.createElement("canvas");
+    c.width = obj.w;
+    c.height = obj.h;
+    const cctx = c.getContext("2d");
+    const imgData = new ImageData(new Uint8ClampedArray(obj.data), obj.w, obj.h);
+    cctx.putImageData(imgData, 0, 0);
+    fillBitmapCache.set(id, c);
+  }
+
+  // world-space placement: 1 pixel = 1/ppw world units
+  const ppw = obj.ppw || 1; // pixels per world unit
+  inkCtx.drawImage(c, obj.x, obj.y, obj.w / ppw, obj.h / ppw);
+
+  inkCtx.restore();
+  return;
+}
 
     if (obj.kind === "stroke" || obj.kind === "erase") {
       inkCtx.globalCompositeOperation = obj.kind === "erase" ? "destination-out" : "source-over";
@@ -1123,6 +1151,7 @@ applyWorldTransform(inkCtx);
     if (t === "bgMove") { inkCanvas.style.cursor = "grab"; return; }
     if (t === "bgScale") { inkCanvas.style.cursor = "nwse-resize"; return; }
     if (t === "bgRotate") { inkCanvas.style.cursor = "alias"; return; }
+     if (t === "bucket") { inkCanvas.style.cursor = "copy"; return; }
     inkCanvas.style.cursor = "default";
   }
 
@@ -1464,6 +1493,8 @@ applyWorldTransform(inkCtx);
     const { sx, sy } = clientToScreen(e);
     const w = screenToWorld(sx, sy);
 
+     
+
     gesture.startScreen = { sx, sy };
     gesture.lastScreen = { sx, sy };
     gesture.startWorld = w;
@@ -1480,6 +1511,73 @@ applyWorldTransform(inkCtx);
       inkCanvas.style.cursor = "grabbing";
       return;
     }
+
+     // Bucket tool: fill region bounded by "full opacity" pixels (alpha >= 250)
+if (state.tool === "bucket") {
+  gesture.active = false;
+  gesture.mode = "none";
+  try { inkCanvas.releasePointerCapture(e.pointerId); } catch {}
+
+  // Choose a world-rect tile to operate on: current viewport (+ small margin)
+  const z = state.zoom || 1;
+  const marginScreenPx = 120;
+  const marginWorld = marginScreenPx / z;
+
+  const worldLeft = (0 - state.panX) / z - marginWorld;
+  const worldTop = (0 - state.panY) / z - marginWorld;
+  const worldW = (state.viewW / z) + marginWorld * 2;
+  const worldH = (state.viewH / z) + marginWorld * 2;
+
+  // pixelsPerWorld aligned to screen device pixels
+  let ppw = (state.pixelRatio || 1) * z;
+
+  // Safety cap so offscreen canvas doesn't explode at high zoom / big screens
+  const maxDim = 2600;
+  const needW = worldW * ppw;
+  const needH = worldH * ppw;
+  const scaleDown = Math.max(needW / maxDim, needH / maxDim, 1);
+  ppw = ppw / scaleDown;
+
+  const worldRect = { x: worldLeft, y: worldTop, w: worldW, h: worldH };
+
+  // Render walls into offscreen
+  const { off, ctx } = renderSceneToOffscreen(worldRect, ppw);
+
+  // Read pixels
+  const img = ctx.getImageData(0, 0, off.width, off.height);
+
+  // Convert click WORLD -> offscreen PIXEL
+  const px = Math.floor((w.x - worldRect.x) * ppw);
+  const py = Math.floor((w.y - worldRect.y) * ppw);
+
+  const rgb = hexToRgb(state.color);
+  const alpha = Math.round(clamp(state.opacity ?? 1, 0, 1) * 255);
+
+  const ok = floodFillAlphaWalls(img, px, py, [rgb.r, rgb.g, rgb.b, alpha], 250);
+  if (!ok) { showToast("No fill (clicked a wall?)"); return; }
+
+  // Save fill as world-space bitmap object
+  pushUndo(); clearRedo();
+
+  const fillObj = {
+    kind: "fillBitmap",
+    x: worldRect.x,
+    y: worldRect.y,
+    w: img.width,
+    h: img.height,
+    ppw: ppw,
+    opacity: 1,
+    data: Array.from(img.data)
+  };
+  ensureObjId(fillObj);
+
+  // Put behind everything so outlines stay on top
+  state.objects.unshift(fillObj);
+
+  redrawAll();
+  showToast("Filled");
+  return;
+}
 
     // Text tool
     if (state.tool === "text") {
@@ -2257,6 +2355,7 @@ if (!typing && (e.key === "f" || e.key === "F")) {
       if (k === "a") setActiveTool("arrow");
       if (k === "t") setActiveTool("text");
       if (k === "e") setActiveTool("eraser");
+      if (k === "b") setActiveTool("bucket"); //f?
     }
 
     // Undo/redo
@@ -2336,6 +2435,189 @@ if (!typing && (e.key === "f" || e.key === "F")) {
     state.redo = [];
     applySnapshot(data);
   }
+   function hexToRgb(hex) {
+  const s = String(hex || "").trim();
+  const m = s.match(/^#?([0-9a-f]{6})$/i);
+  if (!m) return { r: 0, g: 0, b: 0 };
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+// Flood-fill ONLY "empty" pixels (alpha < wallAlpha).
+// Walls are alpha >= wallAlpha (e.g. full opacity strokes).
+function floodFillAlphaWalls(imgData, sx, sy, fillRGBA, wallAlpha = 250) {
+  const { width: W, height: H, data } = imgData;
+  if (sx < 0 || sy < 0 || sx >= W || sy >= H) return false;
+
+  const idx0 = (sy * W + sx) * 4;
+  const a0 = data[idx0 + 3];
+
+  // If you click on a wall pixel, do nothing
+  if (a0 >= wallAlpha) return false;
+
+  // BFS stack
+  const stack = [[sx, sy]];
+  const visited = new Uint8Array(W * H);
+
+  const [fr, fg, fb, fa] = fillRGBA;
+
+  while (stack.length) {
+    const [x, y] = stack.pop();
+    const p = y * W + x;
+    if (visited[p]) continue;
+    visited[p] = 1;
+
+    const i = p * 4;
+    const a = data[i + 3];
+
+    // Stop at walls
+    if (a >= wallAlpha) continue;
+
+    // Fill pixel
+    data[i + 0] = fr;
+    data[i + 1] = fg;
+    data[i + 2] = fb;
+    data[i + 3] = fa;
+
+    // Neighbors
+    if (x > 0) stack.push([x - 1, y]);
+    if (x < W - 1) stack.push([x + 1, y]);
+    if (y > 0) stack.push([x, y - 1]);
+    if (y < H - 1) stack.push([x, y + 1]);
+  }
+
+  return true;
+}
+   function renderSceneToOffscreen(worldRect, ppw) {
+  // worldRect: {x,y,w,h} in WORLD units
+  // ppw: pixels per world unit
+  const Wpx = Math.max(1, Math.round(worldRect.w * ppw));
+  const Hpx = Math.max(1, Math.round(worldRect.h * ppw));
+
+  const off = document.createElement("canvas");
+  off.width = Wpx;
+  off.height = Hpx;
+  const ctx = off.getContext("2d");
+
+  // Transform: world -> offscreen pixels
+  ctx.setTransform(ppw, 0, 0, ppw, -worldRect.x * ppw, -worldRect.y * ppw);
+
+  // Draw all objects in correct compositing order (erase uses destination-out)
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (const obj of state.objects) {
+    if (!obj || obj.hidden) continue;
+
+    // NOTE: we intentionally do NOT draw previous fills as "walls" unless you want them to block.
+    // If you DO want fills to block, remove this.
+    if (obj.kind === "fillBitmap") continue;
+
+    const op = (obj.opacity ?? 1);
+    ctx.globalAlpha = op;
+
+    if (obj.kind === "erase") {
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.strokeStyle = "rgba(0,0,0,1)";
+      ctx.lineWidth = obj.size || 20;
+
+      const pts = obj.points || [];
+      if (pts.length >= 2) {
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.stroke();
+      }
+      continue;
+    }
+
+    ctx.globalCompositeOperation = "source-over";
+
+    if (obj.kind === "stroke") {
+      ctx.strokeStyle = obj.color || "#111";
+      ctx.lineWidth = obj.size || 4;
+      const pts = obj.points || [];
+      if (pts.length >= 2) {
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.stroke();
+      }
+      continue;
+    }
+
+    if (obj.kind === "line" || obj.kind === "arrow") {
+      ctx.strokeStyle = obj.color || "#111";
+      ctx.lineWidth = obj.size || 4;
+      ctx.beginPath();
+      ctx.moveTo(obj.x1, obj.y1);
+      ctx.lineTo(obj.x2, obj.y2);
+      ctx.stroke();
+      continue;
+    }
+
+    if (obj.kind === "rect") {
+      const x1 = obj.x1, y1 = obj.y1, x2 = obj.x2, y2 = obj.y2;
+      const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+      const rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1);
+      const ang = obj.rot || 0;
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      if (ang) ctx.rotate(ang);
+
+      // draw fill if present
+      if (obj.filled) {
+        ctx.fillStyle = obj.fillColor || obj.color || "#111";
+        ctx.fillRect(-rw / 2, -rh / 2, rw, rh);
+      }
+
+      ctx.strokeStyle = obj.color || "#111";
+      ctx.lineWidth = obj.size || 4;
+      ctx.strokeRect(-rw / 2, -rh / 2, rw, rh);
+      ctx.restore();
+      continue;
+    }
+
+    if (obj.kind === "circle") {
+      const x1 = obj.x1, y1 = obj.y1, x2 = obj.x2, y2 = obj.y2;
+      const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+      const rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2;
+      const ang = obj.rot || 0;
+
+      ctx.save();
+      ctx.translate(cx, cy);
+
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx, ry, ang, 0, Math.PI * 2);
+
+      if (obj.filled) {
+        ctx.fillStyle = obj.fillColor || obj.color || "#111";
+        ctx.fill();
+      }
+
+      ctx.strokeStyle = obj.color || "#111";
+      ctx.lineWidth = obj.size || 4;
+      ctx.stroke();
+      ctx.restore();
+      continue;
+    }
+
+    if (obj.kind === "arc") {
+      ctx.strokeStyle = obj.color || "#111";
+      ctx.lineWidth = obj.size || 4;
+      ctx.beginPath();
+      ctx.arc(obj.cx, obj.cy, Math.max(0.5, obj.r || 0), obj.a1 || 0, obj.a2 || 0, !!obj.ccw);
+      ctx.stroke();
+      continue;
+    }
+
+    // text not needed for walls; skip or include if you want it to block
+  }
+
+  // return the offscreen + ctx
+  return { off, ctx };
+}
   function freshBoardSnapshot() {
     return {
       v: 8,
