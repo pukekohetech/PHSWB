@@ -2517,11 +2517,11 @@ if (isWall(r, g, b, a)) continue;
   return true;
 }
 
-   function isWall(r, g, b, a, alphaThreshold = 40, darkThreshold = 60) {
-  // Strong alpha always blocks
+function isWall(r, g, b, a, alphaThreshold = 8, darkThreshold = 80) {
+  // Treat ANY visible alpha as a wall (good for anti-aliased edges)
   if (a >= alphaThreshold) return true;
 
-  // Dark colours can also act as walls even if alpha is low
+  // Optional: dark pixels can also be walls even if alpha is tiny
   const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
   return lum <= darkThreshold;
 }
