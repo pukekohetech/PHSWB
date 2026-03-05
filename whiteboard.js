@@ -483,7 +483,6 @@ applyWorldTransform(inkCtx);
     inkCtx.lineJoin = "round";
 
 if (obj.kind === "polyFill") {
-  inkCtx.save();
   inkCtx.globalCompositeOperation = "source-over";
   inkCtx.globalAlpha = (obj.opacity ?? 1);
   applyWorldTransform(inkCtx);
@@ -498,7 +497,7 @@ if (obj.kind === "polyFill") {
     inkCtx.fill();
   }
 
-  inkCtx.restore();
+  inkCtx.restore(); // restore the *one* save at function start
   return;
 }
      
