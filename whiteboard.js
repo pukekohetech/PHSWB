@@ -54,14 +54,6 @@
   const brushOut = document.getElementById("brushOut");
   const swatchLive = document.getElementById("swatchLive");
 
-  // Opacity controls (stroke)
-  const opacityRange = document.getElementById("opacityRange");
-  const opacityOut = document.getElementById("opacityOut");
-
-  // Background opacity controls
-  const bgOpacity = document.getElementById("bgOpacity");
-  const bgOpacityOut = document.getElementById("bgOpacityOut");
-
   const settingsBtn = document.getElementById("settingsBtn");
   const settingsPanel = document.getElementById("settingsPanel");
   const settingsCloseBtn = document.getElementById("settingsCloseBtn");
@@ -172,7 +164,7 @@
     title: "",
     pxPerMm: DEFAULT_PX_PER_MM,
 
-    bg: { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0, opacity: 1 },
+    bg: { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0 },
 
     objects: [],
     undo: [],
@@ -183,8 +175,19 @@
     viewH: 0
   };
 
-  // SVG reveal state
-  const svgReveal = { active: false, groupId: null, partIndices: [], revealed: 0 };
+  // SVG reveal state (uses stable object ids so reveal still works after deletions)
+  let _nextObjId = 1;
+  const svgReveal = { active: false, groupId: null, partIds: [], revealed: 0 };
+
+  function ensureObjId(o) {
+    if (!o) return null;
+    if (!o._id) o._id = `o${_nextObjId++}`;
+    return o._id;
+  }
+  function findObjById(id) {
+    if (!id) return null;
+    return state.objects.find(o => o && o._id === id) || null;
+  }
 
   // Arc draft (two-stage center pick)
   const arcDraft = { hasCenter: false, cx: 0, cy: 0 };
@@ -362,7 +365,6 @@
       tool: state.tool,
       color: state.color,
       size: state.size,
-      opacity: state.opacity,
       zoom: state.zoom,
       panX: state.panX,
       panY: state.panY,
@@ -379,8 +381,6 @@
 
     setColor(snap.color || "#111111");
     setBrushSize(snap.size || 5);
-
-    setStrokeOpacity(snap.opacity ?? 1);
 
     state.zoom = Number(snap.zoom || 1);
     state.panX = Number(snap.panX || 0);
@@ -427,9 +427,6 @@
   ========================= */
   function applyBgTransform() {
     bgLayer.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
-
-    // Background opacity lives on the layer
-    bgLayer.style.opacity = String(clamp(Number(state.bg.opacity ?? 1), 0, 1));
 
     if (!state.bg.src) {
       bgImg.style.display = "none";
@@ -478,53 +475,9 @@
     inkCtx.lineCap = "round";
     inkCtx.lineJoin = "round";
 
-    // per-object opacity (eraser stays fully opaque)
-    const objAlpha = clamp(Number(obj.opacity ?? 1), 0, 1);
-
-    // optional fill (used for filled rect/circle and closed strokes)
-    const hasFill = obj.fill && String(obj.fill).trim() && String(obj.fill).trim().toLowerCase() !== 'none' && String(obj.fill).trim().toLowerCase() !== 'transparent';
-    const fillAlpha = clamp(Number(obj.fillOpacity ?? objAlpha), 0, 1);
-
-    if (obj.kind === "stroke") {
-      inkCtx.globalCompositeOperation = "source-over";
-      inkCtx.globalAlpha = objAlpha;
-      inkCtx.strokeStyle = obj.color;
-      inkCtx.lineWidth = obj.size;
-      inkCtx.beginPath();
-      const pts = obj.points || [];
-      if (pts.length) {
-        inkCtx.moveTo(pts[0].x, pts[0].y);
-        for (let i = 1; i < pts.length; i++) inkCtx.lineTo(pts[i].x, pts[i].y);
-      }
-      // fill only if requested and path looks closed-ish
-      if (hasFill && pts.length >= 3) {
-        const dx = pts[0].x - pts[pts.length - 1].x;
-        const dy = pts[0].y - pts[pts.length - 1].y;
-        const closed = Math.hypot(dx, dy) <= Math.max(8, obj.size * 2);
-        if (closed) {
-          inkCtx.save();
-          inkCtx.globalAlpha = fillAlpha;
-          inkCtx.fillStyle = obj.fill;
-          inkCtx.closePath();
-          inkCtx.fill();
-          inkCtx.restore();
-
-          // rebuild stroke path after fill (closePath affects stroke joins)
-          inkCtx.beginPath();
-          inkCtx.moveTo(pts[0].x, pts[0].y);
-          for (let i = 1; i < pts.length; i++) inkCtx.lineTo(pts[i].x, pts[i].y);
-        }
-      }
-
-      inkCtx.stroke();
-      inkCtx.restore();
-      return;
-    }
-
-    if (obj.kind === "erase") {
-      inkCtx.globalCompositeOperation = "destination-out";
-      inkCtx.globalAlpha = 1;
-      inkCtx.strokeStyle = "rgba(0,0,0,1)";
+    if (obj.kind === "stroke" || obj.kind === "erase") {
+      inkCtx.globalCompositeOperation = obj.kind === "erase" ? "destination-out" : "source-over";
+      inkCtx.strokeStyle = obj.kind === "erase" ? "rgba(0,0,0,1)" : obj.color;
       inkCtx.lineWidth = obj.size;
       inkCtx.beginPath();
       const pts = obj.points || [];
@@ -539,7 +492,6 @@
 
     if (obj.kind === "text") {
       inkCtx.globalCompositeOperation = "source-over";
-      inkCtx.globalAlpha = objAlpha;
       inkCtx.fillStyle = obj.color;
       inkCtx.textBaseline = "top";
       const m = textMetrics(obj);
@@ -558,7 +510,6 @@
     }
 
     inkCtx.globalCompositeOperation = "source-over";
-    inkCtx.globalAlpha = objAlpha;
     inkCtx.strokeStyle = obj.color;
     inkCtx.lineWidth = obj.size;
 
@@ -578,13 +529,6 @@
       inkCtx.save();
       inkCtx.translate(cx, cy);
       if (ang) inkCtx.rotate(ang);
-      if (hasFill) {
-        inkCtx.save();
-        inkCtx.globalAlpha = fillAlpha;
-        inkCtx.fillStyle = obj.fill;
-        inkCtx.fillRect(-rw / 2, -rh / 2, rw, rh);
-        inkCtx.restore();
-      }
       inkCtx.strokeRect(-rw / 2, -rh / 2, rw, rh);
       inkCtx.restore();
     } else if (obj.kind === "circle") {
@@ -595,13 +539,6 @@
       inkCtx.translate(cx, cy);
       inkCtx.beginPath();
       inkCtx.ellipse(0, 0, rx, ry, ang, 0, Math.PI * 2);
-      if (hasFill) {
-        inkCtx.save();
-        inkCtx.globalAlpha = fillAlpha;
-        inkCtx.fillStyle = obj.fill;
-        inkCtx.fill();
-        inkCtx.restore();
-      }
       inkCtx.stroke();
       inkCtx.restore();
     } else if (obj.kind === "arc") {
@@ -629,11 +566,10 @@
     inkCtx.restore();
   }
 
-
   function drawInk() {
     clearCtx(inkCtx, inkCanvas);
     for (const obj of state.objects) {
-      if (obj && !obj.hidden && !obj.deleted) drawInkObject(obj);
+      if (obj && !obj.hidden) drawInkObject(obj);
     }
   }
 
@@ -644,63 +580,7 @@
     const dx = x - cx, dy = y - cy;
     const c = Math.cos(ang), s = Math.sin(ang);
     return { x: cx + dx * c - dy * s, y: cy + dx * s + dy * c };
-  
-
-  function pointSegDist(px, py, x1, y1, x2, y2) {
-    const vx = x2 - x1, vy = y2 - y1;
-    const wx = px - x1, wy = py - y1;
-    const c1 = vx * wx + vy * wy;
-    if (c1 <= 0) return Math.hypot(px - x1, py - y1);
-    const c2 = vx * vx + vy * vy;
-    if (c2 <= c1) return Math.hypot(px - x2, py - y2);
-    const t = c1 / c2;
-    const bx = x1 + t * vx;
-    const by = y1 + t * vy;
-    return Math.hypot(px - bx, py - by);
   }
-
-  function objectNearPoint(obj, p, r) {
-    if (!obj || obj.hidden || obj.deleted) return false;
-    const rr = Math.max(2, r);
-    if (obj.kind === 'stroke') {
-      const pts = obj.points || [];
-      for (let i = 1; i < pts.length; i++) {
-        if (pointSegDist(p.x, p.y, pts[i-1].x, pts[i-1].y, pts[i].x, pts[i].y) <= rr) return true;
-      }
-      return false;
-    }
-    if (obj.kind === 'line' || obj.kind === 'arrow') {
-      return pointSegDist(p.x, p.y, obj.x1, obj.y1, obj.x2, obj.y2) <= rr;
-    }
-    if (obj.kind === 'rect') {
-      const b = objectBounds(obj);
-      return p.x >= b.minX - rr && p.x <= b.maxX + rr && p.y >= b.minY - rr && p.y <= b.maxY + rr;
-    }
-    if (obj.kind === 'circle') {
-      const b = objectBounds(obj);
-      return p.x >= b.minX - rr && p.x <= b.maxX + rr && p.y >= b.minY - rr && p.y <= b.maxY + rr;
-    }
-    if (obj.kind === 'arc') {
-      const b = objectBounds(obj);
-      return p.x >= b.minX - rr && p.x <= b.maxX + rr && p.y >= b.minY - rr && p.y <= b.maxY + rr;
-    }
-    return false;
-  }
-
-  function vectorEraseAtPoint(p, r) {
-    let erasedAny = false;
-    for (let i = state.objects.length - 1; i >= 0; i--) {
-      const o = state.objects[i];
-      if (!o || o.hidden || o.deleted) continue;
-      if (o.kind === 'erase') continue;
-      if (!objectNearPoint(o, p, r)) continue;
-      o.deleted = true;
-      erasedAny = true;
-      // keep erasing; comment next line to only erase one object per move
-    }
-    return erasedAny;
-  }
-}
 
   function arcDelta(a1, a2) {
     const TWO_PI = Math.PI * 2;
@@ -1057,7 +937,7 @@
 
     // Collect endpoints + segments once at pointerdown
     for (const obj of state.objects) {
-      if (!obj || obj.hidden || obj.deleted) continue;
+      if (!obj || obj.hidden) continue;
 
       if (obj.kind === "line" || obj.kind === "arrow") {
         endpoints.push({ x: obj.x1, y: obj.y1 }, { x: obj.x2, y: obj.y2 });
@@ -1162,28 +1042,30 @@
     return d2 < d1 ? hit2 : hit1;
   }
 
-  // Shape point snap (rect/circle/arc point): prefer ends/intersections always.
-  function snapShapePoint(start, rawPt, ctrlHeld) {
+  // SNAP INVERSION (per your request):
+  // - Snapping is ON by default (endpoints/intersections, angle snaps incl. 45°/60°, mm grid / whole-mm length).
+  // - Holding Ctrl/Cmd temporarily BYPASSES snapping (free placement).
+  //
+  // Shape point snap (rect/circle/arc point): prefer ends/intersections; else angle+grid.
+  function snapShapePoint(start, rawPt, bypassSnap) {
+    if (bypassSnap) return { x: rawPt.x, y: rawPt.y };
+
     const hit = snapPointPreferEndsIntersections(rawPt);
     if (hit) return hit;
 
-    if (ctrlHeld) {
-      const s = snapEndpointToAngles(start.x, start.y, rawPt.x, rawPt.y);
-      return snapToMmGridWorld({ x: s.x2, y: s.y2 });
-    }
-    return snapToMmGridWorld(rawPt);
+    const s = snapEndpointToAngles(start.x, start.y, rawPt.x, rawPt.y);
+    return snapToMmGridWorld({ x: s.x2, y: s.y2 });
   }
 
-  // Line/arrow point snap: prefer ends/intersections always; else rules.
-  function snapLinePoint(start, rawPt, ctrlHeld) {
+  // Line/arrow point snap: prefer ends/intersections; else angle+whole-mm length.
+  function snapLinePoint(start, rawPt, bypassSnap) {
+    if (bypassSnap) return { x: rawPt.x, y: rawPt.y };
+
     const hit = snapPointPreferEndsIntersections(rawPt);
     if (hit) return hit;
 
-    if (ctrlHeld) {
-      const s = snapEndpointToAngles(start.x, start.y, rawPt.x, rawPt.y);
-      return snapToWholeMmLength(start, { x: s.x2, y: s.y2 });
-    }
-    return snapToWholeMmLength(start, rawPt);
+    const s = snapEndpointToAngles(start.x, start.y, rawPt.x, rawPt.y);
+    return snapToWholeMmLength(start, { x: s.x2, y: s.y2 });
   }
 
   /* =========================
@@ -1206,30 +1088,6 @@
   function updateScaleOut() {
     if (!scaleOut) return;
     scaleOut.textContent = `1 mm = ${pxPerMm().toFixed(3)} px`;
-  }
-
-  function updateOpacityOut() {
-    if (!opacityOut) return;
-    opacityOut.textContent = `${Math.round(state.opacity * 100)}%`;
-  }
-
-  function setStrokeOpacity(v) {
-    state.opacity = clamp(Number(v), 0.05, 1);
-    if (opacityRange) opacityRange.value = String(state.opacity);
-    updateOpacityOut();
-  }
-
-  function updateBgOpacityOut() {
-    if (!bgOpacityOut) return;
-    bgOpacityOut.textContent = `${Math.round(clamp(Number(state.bg.opacity ?? 1), 0, 1) * 100)}%`;
-  }
-
-  function setBackgroundOpacity(v) {
-    state.bg.opacity = clamp(Number(v), 0, 1);
-    if (bgOpacity) bgOpacity.value = String(state.bg.opacity);
-    updateBgOpacityOut();
-    applyBgTransform();
-    redrawAll();
   }
 
   function updateCursorFromTool() {
@@ -1607,16 +1465,17 @@
       if (!text) return;
 
       pushUndo(); clearRedo();
-      state.objects.push({
+      const obj = {
         kind: "text",
         x: w.x,
         y: w.y,
         text: String(text),
         color: state.color,
         fontSize: Math.max(14, Math.round(state.size * 4)),
-        rot: 0,
-        opacity: state.opacity
-      });
+        rot: 0
+      };
+      ensureObjId(obj);
+      state.objects.push(obj);
       state.selectionIndex = state.objects.length - 1;
       setActiveTool("select");
       redrawAll();
@@ -1647,10 +1506,10 @@
 
     // Arc tool (2-stage)
     if (state.tool === "arc") {
-      const ctrlHeld = isMac ? !(e.metaKey : e.ctrlKey);
+      const bypassSnap = isMac ? e.metaKey : e.ctrlKey;
 
       if (!arcDraft.hasCenter) {
-        const c = snapShapePoint(w, w, ctrlHeld); // start=raw ok
+        const c = snapShapePoint(w, w, bypassSnap); // start=raw ok
         arcDraft.hasCenter = true;
         arcDraft.cx = c.x;
         arcDraft.cy = c.y;
@@ -1669,14 +1528,15 @@
       state.selectionIndex = -1;
 
       const start = { x: arcDraft.cx, y: arcDraft.cy };
-      const p1 = snapShapePoint(start, w, ctrlHeld);
+      const p1 = snapShapePoint(start, w, bypassSnap);
 
       const cx = arcDraft.cx, cy = arcDraft.cy;
       const a1 = Math.atan2(p1.y - cy, p1.x - cx);
       let r = Math.hypot(p1.x - cx, p1.y - cy);
       r = Math.max(1, Math.round(r / pxPerMm()) * pxPerMm());
 
-      const obj = { kind: "arc", color: state.color, size: state.size, opacity: state.opacity, cx, cy, r, a1, a2: a1, ccw: false };
+      const obj = { kind: "arc", color: state.color, size: state.size, cx, cy, r, a1, a2: a1, ccw: false };
+      ensureObjId(obj);
       state.objects.push(obj);
 
       gesture.activeObj = obj;
@@ -1697,7 +1557,8 @@
     state.selectionIndex = -1;
 
     if (state.tool === "pen") {
-      const obj = { kind: "stroke", color: state.color, size: state.size, opacity: state.opacity, points: [w] };
+      const obj = { kind: "stroke", color: state.color, size: state.size, points: [w] };
+      ensureObjId(obj);
       state.objects.push(obj);
       gesture.activeObj = obj;
       gesture.mode = "drawStroke";
@@ -1706,18 +1567,8 @@
     }
 
     if (state.tool === "eraser") {
-      // If SVG reveal ink is active (show/hide mode), use vector-erase so it persists
-      if (svgReveal.active) {
-        pushUndo(); clearRedo();
-        gesture.activeObj = null;
-        gesture.mode = "vectorErase";
-        gesture.eraserR = Math.max(10, state.size * 2.2);
-        vectorEraseAtPoint(w, gesture.eraserR);
-        redrawAll();
-        return;
-      }
-
       const obj = { kind: "erase", size: Math.max(10, state.size * 2.2), points: [w] };
+      ensureObjId(obj);
       state.objects.push(obj);
       gesture.activeObj = obj;
       gesture.mode = "drawErase";
@@ -1726,17 +1577,23 @@
     }
 
     if (["line", "rect", "circle", "arrow"].includes(state.tool)) {
-      const ctrlHeld = isMac ? !(e.metaKey : e.ctrlKey);
+      const bypassSnap = isMac ? e.metaKey : e.ctrlKey;
 
       // start point: prefer endpoints/intersections; else mm grid
-      let p0 = snapPointPreferEndsIntersections(w);
-      if (!p0) p0 = snapToMmGridWorld(w);
+      let p0;
+      if (bypassSnap) {
+        p0 = { x: w.x, y: w.y };
+      } else {
+        p0 = snapPointPreferEndsIntersections(w);
+        if (!p0) p0 = snapToMmGridWorld(w);
+      }
 
-      const obj = { kind: state.tool, color: state.color, size: state.size, opacity: state.opacity, x1: p0.x, y1: p0.y, x2: p0.x, y2: p0.y, rot: 0 };
+      const obj = { kind: state.tool, color: state.color, size: state.size, x1: p0.x, y1: p0.y, x2: p0.x, y2: p0.y, rot: 0 };
+      ensureObjId(obj);
       state.objects.push(obj);
       gesture.activeObj = obj;
       gesture.mode = "drawShape";
-      gesture.ctrlHeld = ctrlHeld;
+      gesture.ctrlHeld = bypassSnap;
 
       if (obj.kind === "line") showMeasureTip(sx, sy, "0 mm");
       if (obj.kind === "rect") showMeasureTip(sx, sy, "0 × 0 mm");
@@ -1800,9 +1657,9 @@
 
     // Arc hover radius tip after center set (before drag)
     if (state.tool === "arc" && arcDraft.hasCenter && !gesture.active) {
-      const ctrlHeld = isMac ? !(e.metaKey : e.ctrlKey);
+      const bypassSnap = isMac ? e.metaKey : e.ctrlKey;
       const start = { x: arcDraft.cx, y: arcDraft.cy };
-      const p = snapShapePoint(start, w, ctrlHeld);
+      const p = snapShapePoint(start, w, bypassSnap);
       const rMm = Math.hypot(p.x - arcDraft.cx, p.y - arcDraft.cy) / pxPerMm();
       showMeasureTip(sx, sy, `R ${Math.round(rMm)} mm`);
     }
@@ -1917,9 +1774,9 @@
 
     // Arc drawing
     if (gesture.mode === "drawArc" && gesture.activeObj && gesture.arcCenter) {
-      const ctrlHeld = isMac ? !(e.metaKey : e.ctrlKey);
+      const bypassSnap = isMac ? e.metaKey : e.ctrlKey;
       const cx = gesture.arcCenter.cx, cy = gesture.arcCenter.cy;
-      let p = snapShapePoint({ x: cx, y: cy }, w, ctrlHeld);
+      let p = snapShapePoint({ x: cx, y: cy }, w, bypassSnap);
 
       let aNow = Math.atan2(p.y - cy, p.x - cx);
       const wrapSigned = a => Math.atan2(Math.sin(a), Math.cos(a));
@@ -1965,13 +1822,13 @@
     // Shape drawing
     if (gesture.mode === "drawShape" && gesture.activeObj) {
       const k = gesture.activeObj.kind;
-      const ctrlHeld = isMac ? !(e.metaKey : e.ctrlKey);
+      const bypassSnap = isMac ? e.metaKey : e.ctrlKey;
 
       const startPt = { x: gesture.activeObj.x1, y: gesture.activeObj.y1 };
       let p2 = { x: w.x, y: w.y };
 
-      if (k === "line" || k === "arrow") p2 = snapLinePoint(startPt, p2, ctrlHeld);
-      else if (k === "rect" || k === "circle") p2 = snapShapePoint(startPt, p2, ctrlHeld);
+      if (k === "line" || k === "arrow") p2 = snapLinePoint(startPt, p2, bypassSnap);
+      else if (k === "rect" || k === "circle") p2 = snapShapePoint(startPt, p2, bypassSnap);
 
       // Shift perfect circle
       if (k === "circle" && e.shiftKey) {
@@ -2047,22 +1904,6 @@
   });
   colorInput?.addEventListener("input", () => setColor(colorInput.value));
   brushSize?.addEventListener("input", () => setBrushSize(brushSize.value));
-
-  // Stroke opacity UI (optional; only if your HTML includes these elements)
-  if (opacityRange) opacityRange.value = String(state.opacity);
-  updateOpacityOut();
-  opacityRange?.addEventListener("input", () => {
-    setStrokeOpacity(opacityRange.value);
-    showToast(`Opacity ${Math.round(state.opacity * 100)}%`);
-  });
-
-  // Background opacity UI (optional)
-  if (bgOpacity) bgOpacity.value = String(clamp(Number(state.bg.opacity ?? 1), 0, 1));
-  updateBgOpacityOut();
-  bgOpacity?.addEventListener("input", () => {
-    setBackgroundOpacity(bgOpacity.value);
-    showToast(`BG opacity ${Math.round(clamp(Number(state.bg.opacity ?? 1), 0, 1) * 100)}%`);
-  });
 
   function openSettings(open) {
     const isOpen = open ?? settingsPanel.classList.contains("is-hidden");
@@ -2153,7 +1994,7 @@
   clearBgBtn?.addEventListener("click", () => {
     pushUndo(); clearRedo();
     hardResetGesture();
-    state.bg = { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0, opacity: state.bg.opacity ?? 1 };
+    state.bg = { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0 };
     bgImg.removeAttribute("src");
     redrawAll();
   });
@@ -2295,61 +2136,35 @@
     }
 
     // SVG reveal controls
-    
-    // Fill toggle on selection
-    if (!typing && (e.key === 'f' || e.key === 'F') && state.selectionIndex >= 0) {
-      const o = state.objects[state.selectionIndex];
-      if (o && !o.hidden && !o.deleted && ['rect','circle','stroke'].includes(o.kind)) {
-        pushUndo(); clearRedo();
-        if (e.shiftKey) {
-          o.fill = null;
-          o.fillOpacity = null;
-          showToast('Fill cleared');
-        } else {
-          o.fill = state.color;
-          o.fillOpacity = state.opacity;
-          showToast('Filled');
+    const isRevealKey = (e.key === "." || e.key === "," || e.code === "Period" || e.code === "Comma" || e.code === "NumpadDecimal");
+    if (!typing && svgReveal.active && isRevealKey) {
+      e.preventDefault();
+      const total = svgReveal.partIds.length;
+      if (!total) return;
+
+      if (e.key === "." || e.code === "Period" || e.code === "NumpadDecimal") {
+        while (svgReveal.revealed < total) {
+          const id = svgReveal.partIds[svgReveal.revealed++];
+          const obj = findObjById(id);
+          if (obj) { obj.hidden = false; break; }
         }
         redrawAll();
-        e.preventDefault();
+        showToast(`SVG: ${Math.min(svgReveal.revealed, total)}/${total}`);
+        return;
+      }
+
+      if (e.key === "," || e.code === "Comma") {
+        while (svgReveal.revealed > 0) {
+          const id = svgReveal.partIds[--svgReveal.revealed];
+          const obj = findObjById(id);
+          if (obj) { obj.hidden = true; break; }
+        }
+        redrawAll();
+        showToast(`SVG: ${Math.max(svgReveal.revealed, 0)}/${total}`);
         return;
       }
     }
 
-if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
-  e.preventDefault();
-
-  const indices = getSvgGroupIndices();
-  const total = indices.length;
-  if (!total) { showToast("SVG: nothing to reveal"); return; }
-
-  // keep revealed pointer valid even if objects were deleted/added
-  svgReveal.revealed = clamp(svgReveal.revealed, 0, total);
-
-  if (e.key === ".") {
-    // reveal next hidden part
-    while (svgReveal.revealed < total) {
-      const idx = indices[svgReveal.revealed++];
-      const obj = state.objects[idx];
-      if (obj) { obj.hidden = false; break; }
-    }
-    redrawAll();
-    showToast(`SVG: ${svgReveal.revealed}/${total}`);
-    return;
-  }
-
-  if (e.key === ",") {
-    // hide previous revealed part
-    while (svgReveal.revealed > 0) {
-      const idx = indices[--svgReveal.revealed];
-      const obj = state.objects[idx];
-      if (obj) { obj.hidden = true; break; }
-    }
-    redrawAll();
-    showToast(`SVG: ${svgReveal.revealed}/${total}`);
-    return;
-  }
-}
     // Delete selection
     if (!typing && (e.key === "Delete" || e.key === "Backspace")) {
       if (state.selectionIndex >= 0) {
@@ -2460,13 +2275,12 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
       tool: "pen",
       color: state.color || "#111111",
       size: state.size || 5,
-      opacity: state.opacity ?? 1,
       zoom: 0.25,
       panX: state.viewW / 2,
       panY: state.viewH / 2,
       title: "",
       pxPerMm: state.pxPerMm || DEFAULT_PX_PER_MM,
-      bg: { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0, opacity: state.bg.opacity ?? 1 },
+      bg: { src: "", natW: 0, natH: 0, x: 0, y: 0, scale: 1, rot: 0 },
       objects: []
     };
   }
@@ -2609,7 +2423,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         `scale(${state.bg.scale.toFixed(6)})`,
         `translate(${(-cx).toFixed(3)} ${(-cy).toFixed(3)})`
       ].join(" ");
-      bgMarkup = `<image href="${state.bg.src}" xlink:href="${state.bg.src}" x="0" y="0" width="${natW}" height="${natH}" transform="${t}" opacity="${clamp(Number(state.bg.opacity ?? 1), 0, 1).toFixed(3)}" />`;
+      bgMarkup = `<image href="${state.bg.src}" xlink:href="${state.bg.src}" x="0" y="0" width="${natW}" height="${natH}" transform="${t}" />`;
     }
 
     let defs = "";
@@ -2634,7 +2448,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
     }
 
     for (const obj of state.objects) {
-      if (!obj || obj.hidden || obj.deleted) continue;
+      if (!obj || obj.hidden) continue;
 
       if (obj.kind === "erase") {
         const d = pathFromPoints(obj.points || []);
@@ -2645,7 +2459,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
       if (obj.kind === "stroke") {
         const d = pathFromPoints(obj.points || []);
         if (!d) continue;
-        currentLayer += `<path d="${d}" fill="${obj.fill ? obj.fill : 'none'}" stroke-linecap="round" stroke-linejoin="round" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}"${obj.fill ? ` fill-opacity="${clamp(Number(obj.fillOpacity ?? obj.opacity ?? 1),0,1).toFixed(3)}"` : ''}/>`;
+        currentLayer += `<path d="${d}" fill="none" stroke="${obj.color}" stroke-linecap="round" stroke-linejoin="round" stroke-width="${obj.size}"/>`;
         continue;
       }
 
@@ -2655,7 +2469,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         const cy = obj.y + m.h / 2;
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx.toFixed(3)} ${cy.toFixed(3)}) rotate(${ang.toFixed(6)}) translate(${(-m.w / 2).toFixed(3)} ${(-m.h / 2).toFixed(3)})`;
-        currentLayer += `<text x="0" y="0" transform="${t}" fill="${obj.color}" opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-weight="700" font-size="${m.fontSize}">${svgEscape(obj.text || "")}</text>`;
+        currentLayer += `<text x="0" y="0" transform="${t}" fill="${obj.color}" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-weight="700" font-size="${m.fontSize}">${svgEscape(obj.text || "")}</text>`;
         continue;
       }
 
@@ -2663,7 +2477,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
       const w = x2 - x1, h = y2 - y1;
 
       if (obj.kind === "line") {
-        currentLayer += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" stroke-linecap="round" />`;
+        currentLayer += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-linecap="round" />`;
         continue;
       }
 
@@ -2676,7 +2490,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         const hy1 = y2 + Math.sin(a1) * headLen;
         const hx2 = x2 + Math.cos(a2) * headLen;
         const hy2 = y2 + Math.sin(a2) * headLen;
-        currentLayer += `<path d="M ${x1} ${y1} L ${x2} ${y2} M ${x2} ${y2} L ${hx1} ${hy1} M ${x2} ${y2} L ${hx2} ${hy2}" fill="${obj.fill ? obj.fill : 'none'}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" stroke-linecap="round" stroke-linejoin="round" />`;
+        currentLayer += `<path d="M ${x1} ${y1} L ${x2} ${y2} M ${x2} ${y2} L ${hx1} ${hy1} M ${x2} ${y2} L ${hx2} ${hy2}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-linecap="round" stroke-linejoin="round" />`;
         continue;
       }
 
@@ -2685,7 +2499,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         const rw = Math.abs(w), rh = Math.abs(h);
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="${obj.fill ? obj.fill : 'none'}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}"${obj.fill ? ` fill-opacity="${clamp(Number(obj.fillOpacity ?? obj.opacity ?? 1),0,1).toFixed(3)}"` : ''} />`;
+        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" />`;
         continue;
       }
 
@@ -2694,7 +2508,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         const rx = Math.abs(w) / 2, ry = Math.abs(h) / 2;
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="${obj.fill ? obj.fill : 'none'}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}"${obj.fill ? ` fill-opacity="${clamp(Number(obj.fillOpacity ?? obj.opacity ?? 1),0,1).toFixed(3)}"` : ''} />`;
+        currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" />`;
         continue;
       }
 
@@ -2706,7 +2520,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         const rawSpanAbs = Math.abs(a2 - a1);
 
         if (rawSpanAbs >= TWO_PI - 1e-6) {
-          currentLayer += `<circle cx="${obj.cx}" cy="${obj.cy}" r="${obj.r}" fill="${obj.fill ? obj.fill : 'none'}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" />`;
+          currentLayer += `<circle cx="${obj.cx}" cy="${obj.cy}" r="${obj.r}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" />`;
           continue;
         }
 
@@ -2719,32 +2533,16 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         const exp = obj.cx + Math.cos(a2) * obj.r;
         const eyp = obj.cy + Math.sin(a2) * obj.r;
 
-        currentLayer += `<path d="M ${sxp} ${syp} A ${obj.r} ${obj.r} 0 ${largeArc} ${sweep} ${exp} ${eyp}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" stroke-linecap="round" />`;
+        currentLayer += `<path d="M ${sxp} ${syp} A ${obj.r} ${obj.r} 0 ${largeArc} ${sweep} ${exp} ${eyp}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-linecap="round" />`;
         continue;
       }
     }
 
     const inkMarkup = pastLayer + currentLayer;
 
-    // Embed a lossless snapshot for perfect round-trip (including eraser order, opacity, etc.).
-    // This does not affect how the SVG renders in other viewers.
-    let meta = "";
-    try {
-      const snapshot = {
-        v: 1,
-        app: "phs-whiteboard",
-        cam: { panX: state.panX, panY: state.panY, zoom: state.zoom },
-        pxPerMm: state.pxPerMm,
-        bg: state.bg ? { ...state.bg } : null,
-        objects: (state.objects || []).map(o => ({ ...o })),
-      };
-      meta = `<metadata id="phs-whiteboard-snapshot" type="application/json">${svgEscape(JSON.stringify(snapshot))}</metadata>`;
-    } catch { /* ignore */ }
-
     const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
      width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-  ${meta}
   <defs>${defs}</defs>
   <rect x="0" y="0" width="${W}" height="${H}" fill="white"/>
   <g transform="${cam}">
@@ -2782,7 +2580,6 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
 
       octx.save();
       octx.translate(state.panX, state.panY);
-      octx.globalAlpha = clamp(Number(state.bg.opacity ?? 1), 0, 1);
       octx.scale(state.zoom, state.zoom);
 
       const natW = state.bg.natW;
@@ -2817,14 +2614,6 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
   function parseNumberAttr(v) {
     const n = parseFloat(String(v || "").replace(/px$/, ""));
     return isFinite(n) ? n : null;
-  }
-
-  function attrOrStyle(el, attrName, cssProp) {
-    const a = el.getAttribute(attrName);
-    if (a != null) return a;
-    const style = el.getAttribute("style") || "";
-    const m = style.match(new RegExp(String(cssProp).replace(/[-/\^$*+?.()|[\]{}]/g, "\$&") + "\s*:\s*([^;]+)", "i"));
-    return m ? m[1].trim() : null;
   }
 
   function ensureHiddenSvgHost() {
@@ -2864,54 +2653,6 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
     const parsedSvg = doc.querySelector("svg");
     if (!parsedSvg) { showToast("SVG not valid"); return; }
 
-    // Lossless round-trip: if this SVG was exported by this app, prefer the embedded snapshot.
-    // This guarantees show/hide, eraser order, opacity, etc. match exactly what was on-screen.
-    const metaEl = parsedSvg.querySelector("metadata#phs-whiteboard-snapshot");
-    if (metaEl && metaEl.textContent) {
-      try {
-        const snap = JSON.parse(metaEl.textContent);
-        if (snap && snap.app === "phs-whiteboard" && Array.isArray(snap.objects)) {
-          const groupId = "svg_" + Date.now();
-          pushUndo(); clearRedo(); hardResetGesture();
-
-          // Background (if present in snapshot)
-          if (snap.bg && snap.bg.src) {
-            state.bg = { ...state.bg, ...snap.bg };
-            bgImg.src = state.bg.src;
-          }
-
-          // Restore camera so imported SVG overlays exactly as it looked when exported.
-          if (snap.cam && typeof snap.cam.zoom === "number") {
-            state.zoom = snap.cam.zoom;
-            state.panX = snap.cam.panX || 0;
-            state.panY = snap.cam.panY || 0;
-          }
-
-          const startIndex = state.objects.length;
-          for (const o of snap.objects) {
-            const obj = deepClone(o);
-            obj.svgGroupId = groupId;
-            obj.hidden = true;
-            state.objects.push(obj);
-          }
-
-          svgReveal.active = true;
-          svgReveal.groupId = groupId;
-          svgReveal.partIndices = [];
-          svgReveal.revealed = 0;
-          for (let i = startIndex; i < state.objects.length; i++) svgReveal.partIndices.push(i);
-
-          state.selectionIndex = -1;
-          setActiveTool("select");
-          redrawAll();
-          showToast(`SVG imported: 0/${svgReveal.partIndices.length} (→ reveal)`);
-          return;
-        }
-      } catch {
-        // Fall back to best-effort SVG parsing below.
-      }
-    }
-
     const host = ensureHiddenSvgHost();
     host.innerHTML = "";
     const svg = parsedSvg.cloneNode(true);
@@ -2930,8 +2671,6 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
       const href = imgEl.getAttribute("href") || imgEl.getAttribute("xlink:href") || "";
       const wAttr = parseNumberAttr(imgEl.getAttribute("width"));
       const hAttr = parseNumberAttr(imgEl.getAttribute("height"));
-      const opAttr = parseNumberAttr(attrOrStyle(imgEl, "opacity", "opacity"));
-      const imgOpacity = isFinite(opAttr) ? clamp(opAttr, 0, 1) : 1;
       if (href) {
         const tf = (imgEl.getAttribute("transform") || "").trim();
         let x = 0, y = 0, rot = 0, scale = 1;
@@ -2944,7 +2683,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
           rot = ((parseFloat(m[5]) || 0) * Math.PI) / 180;
           scale = parseFloat(m[6]) || 1;
         }
-        pendingBg = { src: String(href), natW: wAttr ?? 0, natH: hAttr ?? 0, x, y, rot, scale, opacity: imgOpacity };
+        pendingBg = { src: String(href), natW: wAttr ?? 0, natH: hAttr ?? 0, x, y, rot, scale };
       }
     }
 
@@ -2980,15 +2719,6 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
       const tag = el.tagName.toLowerCase();
       const stroke = el.getAttribute("stroke");
       const fill = el.getAttribute("fill");
-      const fillOpA = parseNumberAttr(attrOrStyle(el, "fill-opacity", "fill-opacity"));
-
-      const opA = parseNumberAttr(attrOrStyle(el, "stroke-opacity", "stroke-opacity"));
-      const opB = parseNumberAttr(attrOrStyle(el, "opacity", "opacity"));
-      const op = isFinite(opA) ? opA : (isFinite(opB) ? opB : 1);
-      const opacity = clamp(op, 0, 1);
-
-      const fillColor = (!isNone(fill) ? fill : null);
-      const fillOpacity = isFinite(fillOpA) ? clamp(fillOpA, 0, 1) : opacity;
 
       // ignore white fill-only background rects
       if (tag === "rect" && isNone(stroke) && (String(fill || "").toLowerCase() === "white" || !fill)) continue;
@@ -3005,8 +2735,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         const y2 = parseNumberAttr(el.getAttribute("y2")) ?? 0;
         const p1 = mapCTM(el, x1, y1);
         const p2 = mapCTM(el, x2, y2);
-        // Preserve SVG opacity on import so round-trip keeps stroke transparency
-        parts.push({ kind: "line", color, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "line", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -3017,7 +2746,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         const h = parseNumberAttr(el.getAttribute("height")) ?? 0;
         const p1 = mapCTM(el, x, y);
         const p2 = mapCTM(el, x + w, y + h);
-        parts.push({ kind: "rect", color, size, opacity, fill: fillColor, fillOpacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "rect", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -3027,7 +2756,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         const r = parseNumberAttr(el.getAttribute("r")) ?? 0;
         const p1 = mapCTM(el, cx - r, cy - r);
         const p2 = mapCTM(el, cx + r, cy + r);
-        parts.push({ kind: "circle", color, size, opacity, fill: fillColor, fillOpacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "circle", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -3038,8 +2767,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         const ry = parseNumberAttr(el.getAttribute("ry")) ?? 0;
         const p1 = mapCTM(el, cx - rx, cy - ry);
         const p2 = mapCTM(el, cx + rx, cy + ry);
-        // Treat ellipse as circle-ish bounds for our model, but keep opacity
-        parts.push({ kind: "circle", color, size, opacity, fill: fillColor, fillOpacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "circle", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -3052,7 +2780,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
         const pts = [];
         for (let i = 0; i < nums.length - 1; i += 2) pts.push(mapCTM(el, nums[i], nums[i + 1]));
         if (tag === "polygon" && pts.length) pts.push({ ...pts[0] });
-        parts.push({ kind: "stroke", color, size, opacity, fill: fillColor, fillOpacity, points: pts });
+        parts.push({ kind: "stroke", color, size, points: pts });
         continue;
       }
 
@@ -3072,7 +2800,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
           pts.push(mapCTM(el, p.x, p.y));
         }
         if (pts.length < 2) continue;
-        parts.push({ kind: "stroke", color, size, opacity, fill: fillColor, fillOpacity, points: pts });
+        parts.push({ kind: "stroke", color, size, points: pts });
         continue;
       }
 
@@ -3094,7 +2822,6 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
       state.bg.rot = pendingBg.rot;
       state.bg.scale = pendingBg.scale;
       bgImg.src = state.bg.src;
-      state.bg.opacity = pendingBg.opacity ?? 1;
     }
 
     const groupId = "svg_" + Date.now();
@@ -3102,6 +2829,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
 
     for (const o of parts) {
       const obj = deepClone(o);
+      ensureObjId(obj);
       obj.svgGroupId = groupId;
       obj.hidden = true;
       state.objects.push(obj);
@@ -3109,9 +2837,9 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
 
     svgReveal.active = true;
     svgReveal.groupId = groupId;
-    svgReveal.partIndices = [];
+    svgReveal.partIds = [];
     svgReveal.revealed = 0;
-    for (let i = startIndex; i < state.objects.length; i++) svgReveal.partIndices.push(i);
+    for (let i = startIndex; i < state.objects.length; i++) svgReveal.partIds.push(state.objects[i]._id);
 
     state.selectionIndex = -1;
     setActiveTool("select");
@@ -3123,7 +2851,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
     }
 
     redrawAll();
-    showToast(`SVG imported: 0/${svgReveal.partIndices.length} (→ reveal)`);
+    showToast(`SVG imported: 0/${svgReveal.partIds.length} (→ reveal)`);
   }
 
   function clearImportedSvgInk() {
@@ -3133,7 +2861,7 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
     state.objects = state.objects.filter(o => !(o && o.svgGroupId === gid));
     svgReveal.active = false;
     svgReveal.groupId = null;
-    svgReveal.partIndices = [];
+    svgReveal.partIds = [];
     svgReveal.revealed = 0;
     state.selectionIndex = -1;
     redrawAll();
