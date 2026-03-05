@@ -527,53 +527,65 @@ applyWorldTransform(inkCtx);
       inkCtx.lineTo(x2, y2);
       inkCtx.stroke();
     } else if (obj.kind === "rect") {
-      const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-      const rw = Math.abs(w), rh = Math.abs(h);
-      const ang = obj.rot || 0;
-      inkCtx.save();
-      inkCtx.translate(cx, cy);
-      if (ang) inkCtx.rotate(ang);
-       if (obj.filled) {
-  inkCtx.fillStyle = obj.fillColor || obj.color;
-  inkCtx.fillRect(-rw / 2, -rh / 2, rw, rh);
-    } else if (obj.kind === "circle") {
-      const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-      const rx = Math.abs(w) / 2, ry = Math.abs(h) / 2;
-      const ang = obj.rot || 0;
-      inkCtx.save();
-      inkCtx.translate(cx, cy);
-     inkCtx.beginPath();
-inkCtx.ellipse(0, 0, rx, ry, ang, 0, Math.PI * 2);
+  const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+  const rw = Math.abs(w), rh = Math.abs(h);
+  const ang = obj.rot || 0;
 
-if (obj.filled) {
-  inkCtx.fillStyle = obj.fillColor || obj.color;
-  inkCtx.fill();
+  inkCtx.save();
+  inkCtx.translate(cx, cy);
+  if (ang) inkCtx.rotate(ang);
+
+  if (obj.filled) {
+    inkCtx.fillStyle = obj.fillColor || obj.color;
+    inkCtx.fillRect(-rw / 2, -rh / 2, rw, rh);
+  }
+
+  inkCtx.strokeRect(-rw / 2, -rh / 2, rw, rh);
+  inkCtx.restore();
+
+} else if (obj.kind === "circle") {
+  const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+  const rx = Math.abs(w) / 2, ry = Math.abs(h) / 2;
+  const ang = obj.rot || 0;
+
+  inkCtx.save();
+  inkCtx.translate(cx, cy);
+
+  inkCtx.beginPath();
+  inkCtx.ellipse(0, 0, rx, ry, ang, 0, Math.PI * 2);
+
+  if (obj.filled) {
+    inkCtx.fillStyle = obj.fillColor || obj.color;
+    inkCtx.fill();
+  }
+
+  inkCtx.stroke();
+  inkCtx.restore();
+
+} else if (obj.kind === "arc") {
+  const { cx, cy, r, a1, a2 } = obj;
+  inkCtx.beginPath();
+  inkCtx.arc(cx, cy, Math.max(0.5, r || 0), a1 || 0, a2 || 0, !!obj.ccw);
+  inkCtx.stroke();
+
+} else if (obj.kind === "arrow") {
+  inkCtx.beginPath();
+  inkCtx.moveTo(x1, y1);
+  inkCtx.lineTo(x2, y2);
+  inkCtx.stroke();
+
+  const ang = Math.atan2(y2 - y1, x2 - x1);
+  const headLen = Math.max(10, obj.size * 3);
+  const a1 = ang + Math.PI * 0.85;
+  const a2 = ang - Math.PI * 0.85;
+
+  inkCtx.beginPath();
+  inkCtx.moveTo(x2, y2);
+  inkCtx.lineTo(x2 + Math.cos(a1) * headLen, y2 + Math.sin(a1) * headLen);
+  inkCtx.moveTo(x2, y2);
+  inkCtx.lineTo(x2 + Math.cos(a2) * headLen, y2 + Math.sin(a2) * headLen);
+  inkCtx.stroke();
 }
-
-inkCtx.stroke();
-      inkCtx.restore();
-    } else if (obj.kind === "arc") {
-      const { cx, cy, r, a1, a2 } = obj;
-      inkCtx.beginPath();
-      inkCtx.arc(cx, cy, Math.max(0.5, r || 0), a1 || 0, a2 || 0, !!obj.ccw);
-      inkCtx.stroke();
-    } else if (obj.kind === "arrow") {
-      inkCtx.beginPath();
-      inkCtx.moveTo(x1, y1);
-      inkCtx.lineTo(x2, y2);
-      inkCtx.stroke();
-      const ang = Math.atan2(y2 - y1, x2 - x1);
-      const headLen = Math.max(10, obj.size * 3);
-      const a1 = ang + Math.PI * 0.85;
-      const a2 = ang - Math.PI * 0.85;
-      inkCtx.beginPath();
-      inkCtx.moveTo(x2, y2);
-      inkCtx.lineTo(x2 + Math.cos(a1) * headLen, y2 + Math.sin(a1) * headLen);
-      inkCtx.moveTo(x2, y2);
-      inkCtx.lineTo(x2 + Math.cos(a2) * headLen, y2 + Math.sin(a2) * headLen);
-      inkCtx.stroke();
-    }
-
     inkCtx.restore();
   }
 
