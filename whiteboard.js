@@ -533,17 +533,24 @@ applyWorldTransform(inkCtx);
       inkCtx.save();
       inkCtx.translate(cx, cy);
       if (ang) inkCtx.rotate(ang);
-      inkCtx.strokeRect(-rw / 2, -rh / 2, rw, rh);
-      inkCtx.restore();
+       if (obj.filled) {
+  inkCtx.fillStyle = obj.fillColor || obj.color;
+  inkCtx.fillRect(-rw / 2, -rh / 2, rw, rh);
     } else if (obj.kind === "circle") {
       const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
       const rx = Math.abs(w) / 2, ry = Math.abs(h) / 2;
       const ang = obj.rot || 0;
       inkCtx.save();
       inkCtx.translate(cx, cy);
-      inkCtx.beginPath();
-      inkCtx.ellipse(0, 0, rx, ry, ang, 0, Math.PI * 2);
-      inkCtx.stroke();
+     inkCtx.beginPath();
+inkCtx.ellipse(0, 0, rx, ry, ang, 0, Math.PI * 2);
+
+if (obj.filled) {
+  inkCtx.fillStyle = obj.fillColor || obj.color;
+  inkCtx.fill();
+}
+
+inkCtx.stroke();
       inkCtx.restore();
     } else if (obj.kind === "arc") {
       const { cx, cy, r, a1, a2 } = obj;
@@ -1593,8 +1600,23 @@ applyWorldTransform(inkCtx);
         if (!p0) p0 = snapToMmGridWorld(w);
       }
 
-      const obj = { kind: state.tool, color: state.color, size: state.size, opacity: state.opacity, x1: p0.x, y1: p0.y, x2: p0.x, y2: p0.y, rot: 0 }; //const obj = { kind: state.tool, color: state.color, size: state.size, opacity: state.opacity, x1:..., y1:..., x2:..., y2:..., rot: 0 };
-      ensureObjId(obj);
+    // const obj = { kind: state.tool, color: state.color, size: state.size, opacity: state.opacity, x1: p0.x, y1: p0.y, x2: p0.x, y2: p0.y, rot: 0 }; //const obj = { kind: state.tool, color: state.color, size: state.size, opacity: state.opacity, x1:..., y1:..., x2:..., y2:..., rot: 0 };
+     const fillHeld = isMac ? e.metaKey : e.ctrlKey;
+
+const obj = {
+  kind: state.tool,
+  color: state.color,
+  size: state.size,
+  opacity: state.opacity,
+
+  // ✅ Ctrl/Cmd fills rect/circle
+  filled: (state.tool === "rect" || state.tool === "circle") && fillHeld,
+  fillColor: state.color,
+
+  x1: p0.x, y1: p0.y, x2: p0.x, y2: p0.y,
+  rot: 0
+};
+       ensureObjId(obj);
       state.objects.push(obj);
       gesture.activeObj = obj;
       gesture.mode = "drawShape";
@@ -2660,6 +2682,7 @@ applyWorldTransform(inkCtx);
   }
 
   function importSvgInkFromText(svgText) {
+     if (el.closest("defs") || el.closest("mask")) continue;
     const doc = new DOMParser().parseFromString(String(svgText || ""), "image/svg+xml");
     const parsedSvg = doc.querySelector("svg");
     if (!parsedSvg) { showToast("SVG not valid"); return; }
