@@ -501,26 +501,39 @@ if (obj.kind === "polyFill") {
   return;
 }
      
-     if (obj.kind === "fillBitmap") {
+if (obj.kind === "fillBitmap") {
   inkCtx.globalCompositeOperation = "source-over";
   inkCtx.globalAlpha = (obj.opacity ?? 1);
+  applyWorldTransform(inkCtx);
 
   const id = ensureObjId(obj);
-  let c = fillBitmapCache.get(id);
+  const src = obj.src || "";
+  if (!src) { inkCtx.restore(); return; }
 
-  if (!c || c.width !== obj.w || c.height !== obj.h) {
-    c = document.createElement("canvas");
-    c.width = obj.w;
-    c.height = obj.h;
-    const cctx = c.getContext("2d");
-    const imgData = new ImageData(new Uint8ClampedArray(obj.data), obj.w, obj.h);
-    cctx.putImageData(imgData, 0, 0);
-    fillBitmapCache.set(id, c);
+  let entry = fillBitmapCache.get(id);
+  if (!entry || entry.src !== src) {
+    const img = new Image();
+    entry = { img, src, ready: false };
+    fillBitmapCache.set(id, entry);
+
+    img.onload = () => {
+      entry.ready = true;
+      // redraw once the PNG is decoded
+      redrawAll();
+    };
+    img.onerror = () => {
+      // keep it non-fatal
+      entry.ready = false;
+    };
+    img.src = src;
   }
 
-  // world-space placement: 1 pixel = 1/ppw world units
-  const ppw = obj.ppw || 1; // pixels per world unit
-  inkCtx.drawImage(c, obj.x, obj.y, obj.w / ppw, obj.h / ppw);
+  if (entry.ready) {
+    const ppw = obj.ppw || 1; // pixels per world unit
+    const wWorld = (obj.w || 1) / ppw;
+    const hWorld = (obj.h || 1) / ppw;
+    inkCtx.drawImage(entry.img, obj.x, obj.y, wWorld, hWorld);
+  }
 
   inkCtx.restore();
   return;
@@ -1532,12 +1545,13 @@ if (obj.kind === "polyFill") {
     }
 
      // Bucket tool: fill region bounded by "full opacity" pixels (alpha >= 250)
+// Bucket tool: fill region bounded by "full opacity" pixels (alpha >= 250)
 if (state.tool === "bucket") {
   gesture.active = false;
   gesture.mode = "none";
   try { inkCanvas.releasePointerCapture(e.pointerId); } catch {}
 
-  // Choose a world-rect tile to operate on: current viewport (+ small margin)
+  // Choose a world-rect tile to operate on: current viewport (+ margin)
   const z = state.zoom || 1;
   const marginScreenPx = 120;
   const marginWorld = marginScreenPx / z;
@@ -1556,7 +1570,7 @@ if (state.tool === "bucket") {
   const needH = worldH * ppw;
   const scaleDown = Math.max(needW / maxDim, needH / maxDim, 1);
   ppw = ppw / scaleDown;
-   ppw = Math.max(ppw, 1.5);   // ✅ IMPORTANT: keep walls at >= ~1.5px thickness
+  ppw = Math.max(ppw, 1.5); // keep walls at >= ~1.5px thickness
 
   const worldRect = { x: worldLeft, y: worldTop, w: worldW, h: worldH };
 
@@ -1565,7 +1579,9 @@ if (state.tool === "bucket") {
 
   // Read pixels
   const img = ctx.getImageData(0, 0, off.width, off.height);
-   dilateWalls(img, 8); // 8 = same alpha threshold as isWall default
+
+  // Optional crack sealing (keep your behavior)
+  dilateWalls(img, 8);
 
   // Convert click WORLD -> offscreen PIXEL
   const px = Math.floor((w.x - worldRect.x) * ppw);
@@ -1574,10 +1590,19 @@ if (state.tool === "bucket") {
   const rgb = hexToRgb(state.color);
   const alpha = Math.round(clamp(state.opacity ?? 1, 0, 1) * 255);
 
-  const ok = floodFillAlphaWalls(img, px, py, [rgb.r, rgb.g, rgb.b, alpha]);
+  const ok = floodFillAlphaWalls(img, px, py, [rgb.r, rgb.g, rgb.b, alpha], 250);
   if (!ok) { showToast("No fill (clicked a wall?)"); return; }
 
-  // Save fill as world-space bitmap object
+  // ✅ Store fill as PNG dataURL (compressed + JSON-safe for undo/boards)
+  const fillCanvas = document.createElement("canvas");
+  fillCanvas.width = img.width;
+  fillCanvas.height = img.height;
+  const fctx = fillCanvas.getContext("2d", { willReadFrequently: false });
+  fctx.putImageData(img, 0, 0);
+
+  // PNG compresses massively vs raw RGBA arrays
+  const dataURL = fillCanvas.toDataURL("image/png");
+
   pushUndo(); clearRedo();
 
   const fillObj = {
@@ -1588,12 +1613,15 @@ if (state.tool === "bucket") {
     h: img.height,
     ppw: ppw,
     opacity: 1,
-    data: Array.from(img.data)
+    src: dataURL
   };
   ensureObjId(fillObj);
 
   // Put behind everything so outlines stay on top
   state.objects.unshift(fillObj);
+
+  // cache invalidation for that id
+  fillBitmapCache.delete(fillObj._id);
 
   redrawAll();
   showToast("Filled");
@@ -2493,53 +2521,97 @@ if (!typing && (e.key === "f" || e.key === "F")) {
   data.set(out);
 }
 // Walls are alpha >= wallAlpha (e.g. full opacity strokes).
+// Walls are pixels where alpha >= wallAlpha (or use isWall if you want more rules)
 function floodFillAlphaWalls(imgData, sx, sy, fillRGBA, wallAlpha = 250) {
   const { width: W, height: H, data } = imgData;
   if (sx < 0 || sy < 0 || sx >= W || sy >= H) return false;
 
   const idx0 = (sy * W + sx) * 4;
- // const a0 = data[idx0 + 3];
+  const a0 = data[idx0 + 3];
 
-  // If you click on a wall pixel, do nothing
- // if (a0 >= wallAlpha) return false;
-const r0 = data[idx0 + 0];
-const g0 = data[idx0 + 1];
-const b0 = data[idx0 + 2];
-const a0 = data[idx0 + 3];
-
-if (isWall(r0, g0, b0, a0)) return false;
-
-  // BFS stack
-  const stack = [[sx, sy]];
-  const visited = new Uint8Array(W * H);
+  // click on wall? no-op
+  if (a0 >= wallAlpha) return false;
 
   const [fr, fg, fb, fa] = fillRGBA;
 
-  while (stack.length) {
-    const [x, y] = stack.pop();
-    const p = y * W + x;
-    if (visited[p]) continue;
-    visited[p] = 1;
+  // Fast pixel checks
+  const isWallAt = (x, y) => data[(y * W + x) * 4 + 3] >= wallAlpha;
 
-    const i = p * 4;
-   
-const r = data[i + 0];
-const g = data[i + 1];
-const b = data[i + 2];
-const a = data[i + 3];
+  const isFilledAt = (x, y) => {
+    const i = (y * W + x) * 4;
+    return data[i + 0] === fr && data[i + 1] === fg && data[i + 2] === fb && data[i + 3] === fa;
+  };
 
-if (isWall(r, g, b, a)) continue;
-    // Fill pixel
+  const setFillAt = (x, y) => {
+    const i = (y * W + x) * 4;
     data[i + 0] = fr;
     data[i + 1] = fg;
     data[i + 2] = fb;
     data[i + 3] = fa;
+  };
 
-    // Neighbors
-    if (x > 0) stack.push([x - 1, y]);
-    if (x < W - 1) stack.push([x + 1, y]);
-    if (y > 0) stack.push([x, y - 1]);
-    if (y < H - 1) stack.push([x, y + 1]);
+  // Scanline flood fill using an integer stack of spans
+  // Each entry: xLeft, xRight, y, dir (dir is -1 or +1 for neighbor row scanning)
+  const stack = new Int32Array(W * 8); // grows if needed
+  let sp = 0;
+
+  const pushSpan = (xl, xr, y, dir) => {
+    // grow stack if needed
+    if (sp + 4 > stack.length) {
+      const bigger = new Int32Array(stack.length * 2);
+      bigger.set(stack);
+      // swap
+      stackRef = bigger;
+    }
+    stackRef[sp++] = xl;
+    stackRef[sp++] = xr;
+    stackRef[sp++] = y;
+    stackRef[sp++] = dir;
+  };
+
+  // Because we may grow, keep a mutable reference
+  let stackRef = stack;
+
+  const findSpan = (x, y) => {
+    let xl = x, xr = x;
+
+    while (xl - 1 >= 0 && !isWallAt(xl - 1, y) && !isFilledAt(xl - 1, y)) xl--;
+    while (xr + 1 < W && !isWallAt(xr + 1, y) && !isFilledAt(xr + 1, y)) xr++;
+
+    for (let xx = xl; xx <= xr; xx++) setFillAt(xx, y);
+
+    return [xl, xr];
+  };
+
+  // seed span
+  const [seedL, seedR] = findSpan(sx, sy);
+  pushSpan(seedL, seedR, sy, -1);
+  pushSpan(seedL, seedR, sy, +1);
+
+  while (sp > 0) {
+    const dir = stackRef[--sp];
+    const y = stackRef[--sp];
+    const xr = stackRef[--sp];
+    const xl = stackRef[--sp];
+
+    const ny = y + dir;
+    if (ny < 0 || ny >= H) continue;
+
+    let x = xl;
+    while (x <= xr) {
+      // skip walls/filled
+      while (x <= xr && (isWallAt(x, ny) || isFilledAt(x, ny))) x++;
+      if (x > xr) break;
+
+      // start new span
+      const [nl, nr] = findSpan(x, ny);
+
+      // push neighbors for this new span
+      pushSpan(nl, nr, ny, dir);
+      pushSpan(nl, nr, ny, -dir);
+
+      x = nr + 1;
+    }
   }
 
   return true;
@@ -2921,6 +2993,17 @@ const fillOp = obj.filled ? ` fill-opacity="${op}"` : "";
   const op = (obj.opacity ?? 1);
   const pts = (obj.pts || []).map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" ");
   currentLayer += `<polygon points="${pts}" fill="${obj.fill || obj.color}" fill-opacity="${op}" stroke="none" />`;
+  continue;
+}
+       if (obj.kind === "fillBitmap" && obj.src) {
+  const op = (obj.opacity ?? 1);
+  const ppw = obj.ppw || 1;
+  const wWorld = (obj.w || 1) / ppw;
+  const hWorld = (obj.h || 1) / ppw;
+
+  currentLayer += `<image href="${obj.src}" xlink:href="${obj.src}"
+      x="${obj.x}" y="${obj.y}" width="${wWorld}" height="${hWorld}"
+      opacity="${op}" />`;
   continue;
 }
 
