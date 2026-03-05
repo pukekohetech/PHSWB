@@ -2511,7 +2511,7 @@ applyWorldTransform(inkCtx);
         const rw = Math.abs(w), rh = Math.abs(h);
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="none" stroke="${obj.color}"stroke-opacity="${op}" stroke-width="${obj.size}" />`;
+        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="none" stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" />`;
         continue;
       }
 
