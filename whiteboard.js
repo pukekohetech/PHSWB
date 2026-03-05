@@ -474,7 +474,7 @@
 
   function drawInkObject(obj) {
     inkCtx.save();
-inkCtx.globalAlpha = state.opacity;
+inkCtx.globalAlpha = (obj.opacity ?? 1);
 applyWorldTransform(inkCtx);
     inkCtx.lineCap = "round";
     inkCtx.lineJoin = "round";
@@ -1539,7 +1539,7 @@ applyWorldTransform(inkCtx);
       let r = Math.hypot(p1.x - cx, p1.y - cy);
       r = Math.max(1, Math.round(r / pxPerMm()) * pxPerMm());
 
-      const obj = { kind: "arc", color: state.color, size: state.size, cx, cy, r, a1, a2: a1, ccw: false };
+      const obj = { kind: "arc", color: state.color, size: state.size, opacity: state.opacity, cx, cy, r, a1, a2: a1, ccw: false };
       ensureObjId(obj);
       state.objects.push(obj);
 
@@ -1561,7 +1561,7 @@ applyWorldTransform(inkCtx);
     state.selectionIndex = -1;
 
     if (state.tool === "pen") {
-      const obj = { kind: "stroke", color: state.color, size: state.size, points: [w] };
+     const obj = { kind: "stroke", color: state.color, size: state.size, opacity: state.opacity, points: [w] };
       ensureObjId(obj);
       state.objects.push(obj);
       gesture.activeObj = obj;
@@ -1592,7 +1592,7 @@ applyWorldTransform(inkCtx);
         if (!p0) p0 = snapToMmGridWorld(w);
       }
 
-      const obj = { kind: state.tool, color: state.color, size: state.size, x1: p0.x, y1: p0.y, x2: p0.x, y2: p0.y, rot: 0 };
+      const obj = { kind: state.tool, color: state.color, size: state.size, opacity: state.opacity, x1: p0.x, y1: p0.y, x2: p0.x, y2: p0.y, rot: 0 }; //const obj = { kind: state.tool, color: state.color, size: state.size, opacity: state.opacity, x1:..., y1:..., x2:..., y2:..., rot: 0 };
       ensureObjId(obj);
       state.objects.push(obj);
       gesture.activeObj = obj;
@@ -2468,7 +2468,7 @@ applyWorldTransform(inkCtx);
       if (obj.kind === "stroke") {
         const d = pathFromPoints(obj.points || []);
         if (!d) continue;
-        currentLayer += `<path d="${d}" fill="none" stroke="${obj.color}" stroke-linecap="round" stroke-linejoin="round" stroke-width="${obj.size}"/>`;
+        currentLayer += `<path d="${d}" fill="none" stroke="${obj.color}" stroke-opacity="${op}" stroke-linecap="round" stroke-linejoin="round" stroke-width="${obj.size}"/>`;
         continue;
       }
 
@@ -2478,7 +2478,7 @@ applyWorldTransform(inkCtx);
         const cy = obj.y + m.h / 2;
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx.toFixed(3)} ${cy.toFixed(3)}) rotate(${ang.toFixed(6)}) translate(${(-m.w / 2).toFixed(3)} ${(-m.h / 2).toFixed(3)})`;
-        currentLayer += `<text x="0" y="0" transform="${t}" fill="${obj.color}" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-weight="700" font-size="${m.fontSize}">${svgEscape(obj.text || "")}</text>`;
+        currentLayer += `<text x="0" y="0" transform="${t}" fill="${obj.color}"  font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif" font-weight="700" font-size="${m.fontSize}">${svgEscape(obj.text || "")}</text>`;
         continue;
       }
 
@@ -2486,7 +2486,7 @@ applyWorldTransform(inkCtx);
       const w = x2 - x1, h = y2 - y1;
 
       if (obj.kind === "line") {
-        currentLayer += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-linecap="round" />`;
+        currentLayer += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" stroke-linecap="round" />`;
         continue;
       }
 
@@ -2499,7 +2499,7 @@ applyWorldTransform(inkCtx);
         const hy1 = y2 + Math.sin(a1) * headLen;
         const hx2 = x2 + Math.cos(a2) * headLen;
         const hy2 = y2 + Math.sin(a2) * headLen;
-        currentLayer += `<path d="M ${x1} ${y1} L ${x2} ${y2} M ${x2} ${y2} L ${hx1} ${hy1} M ${x2} ${y2} L ${hx2} ${hy2}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-linecap="round" stroke-linejoin="round" />`;
+        currentLayer += `<path d="M ${x1} ${y1} L ${x2} ${y2} M ${x2} ${y2} L ${hx1} ${hy1} M ${x2} ${y2} L ${hx2} ${hy2}" fill="none" stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" stroke-linecap="round" stroke-linejoin="round" />`;
         continue;
       }
 
@@ -2508,7 +2508,7 @@ applyWorldTransform(inkCtx);
         const rw = Math.abs(w), rh = Math.abs(h);
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" />`;
+        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="none" stroke="${obj.color}"stroke-opacity="${op}" stroke-width="${obj.size}" />`;
         continue;
       }
 
@@ -2517,7 +2517,7 @@ applyWorldTransform(inkCtx);
         const rx = Math.abs(w) / 2, ry = Math.abs(h) / 2;
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" />`;
+        currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="none" stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" />`;
         continue;
       }
 
@@ -2529,7 +2529,7 @@ applyWorldTransform(inkCtx);
         const rawSpanAbs = Math.abs(a2 - a1);
 
         if (rawSpanAbs >= TWO_PI - 1e-6) {
-          currentLayer += `<circle cx="${obj.cx}" cy="${obj.cy}" r="${obj.r}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" />`;
+          currentLayer += `<circle cx="${obj.cx}" cy="${obj.cy}" r="${obj.r}" fill="none" stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" />`;
           continue;
         }
 
@@ -2542,7 +2542,7 @@ applyWorldTransform(inkCtx);
         const exp = obj.cx + Math.cos(a2) * obj.r;
         const eyp = obj.cy + Math.sin(a2) * obj.r;
 
-        currentLayer += `<path d="M ${sxp} ${syp} A ${obj.r} ${obj.r} 0 ${largeArc} ${sweep} ${exp} ${eyp}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-linecap="round" />`;
+        currentLayer += `<path d="M ${sxp} ${syp} A ${obj.r} ${obj.r} 0 ${largeArc} ${sweep} ${exp} ${eyp}" fill="none" stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" stroke-linecap="round" />`;
         continue;
       }
     }
@@ -2719,6 +2719,13 @@ applyWorldTransform(inkCtx);
       return isRoundTrip ? invCamPoint(p, cam) : p;
     }
 
+     function opacityOf(el) {
+  const o1 = parseNumberAttr(el.getAttribute("stroke-opacity"));
+  const o2 = parseNumberAttr(el.getAttribute("opacity"));
+  const o = (o1 ?? o2);
+  return (o == null) ? 1 : Math.max(0, Math.min(1, o));
+}
+     
     function strokeWidthOf(el) {
       const sw = parseNumberAttr(el.getAttribute("stroke-width"));
       return Math.max(1, sw ?? 3);
@@ -2736,6 +2743,7 @@ applyWorldTransform(inkCtx);
 
       const color = !isNone(stroke) ? stroke : "#111111";
       const size = strokeWidthOf(el);
+       const opacity = opacityOf(el);
 
       if (tag === "line") {
         const x1 = parseNumberAttr(el.getAttribute("x1")) ?? 0;
@@ -2744,7 +2752,7 @@ applyWorldTransform(inkCtx);
         const y2 = parseNumberAttr(el.getAttribute("y2")) ?? 0;
         const p1 = mapCTM(el, x1, y1);
         const p2 = mapCTM(el, x2, y2);
-        parts.push({ kind: "line", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "line", color,opacity, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -2755,7 +2763,7 @@ applyWorldTransform(inkCtx);
         const h = parseNumberAttr(el.getAttribute("height")) ?? 0;
         const p1 = mapCTM(el, x, y);
         const p2 = mapCTM(el, x + w, y + h);
-        parts.push({ kind: "rect", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "rect", color,opacity, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -2765,7 +2773,7 @@ applyWorldTransform(inkCtx);
         const r = parseNumberAttr(el.getAttribute("r")) ?? 0;
         const p1 = mapCTM(el, cx - r, cy - r);
         const p2 = mapCTM(el, cx + r, cy + r);
-        parts.push({ kind: "circle", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "circle", color, opacity, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -2776,7 +2784,7 @@ applyWorldTransform(inkCtx);
         const ry = parseNumberAttr(el.getAttribute("ry")) ?? 0;
         const p1 = mapCTM(el, cx - rx, cy - ry);
         const p2 = mapCTM(el, cx + rx, cy + ry);
-        parts.push({ kind: "circle", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "circle", color, opacity, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -2789,7 +2797,7 @@ applyWorldTransform(inkCtx);
         const pts = [];
         for (let i = 0; i < nums.length - 1; i += 2) pts.push(mapCTM(el, nums[i], nums[i + 1]));
         if (tag === "polygon" && pts.length) pts.push({ ...pts[0] });
-        parts.push({ kind: "stroke", color, size, points: pts });
+        parts.push({ kind: "stroke", color, opacity, size, points: pts });
         continue;
       }
 
@@ -2809,7 +2817,7 @@ applyWorldTransform(inkCtx);
           pts.push(mapCTM(el, p.x, p.y));
         }
         if (pts.length < 2) continue;
-        parts.push({ kind: "stroke", color, size, points: pts });
+        parts.push({ kind: "stroke", color, opacity, size, points: pts });
         continue;
       }
 
