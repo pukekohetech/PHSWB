@@ -54,6 +54,9 @@
   const brushOut = document.getElementById("brushOut");
   const swatchLive = document.getElementById("swatchLive");
 
+  const opacityRange = document.getElementById("opacityRange");
+  const opacityOut = document.getElementById("opacityOut");
+
   const settingsBtn = document.getElementById("settingsBtn");
   const settingsPanel = document.getElementById("settingsPanel");
   const settingsCloseBtn = document.getElementById("settingsCloseBtn");
@@ -471,7 +474,8 @@
 
   function drawInkObject(obj) {
     inkCtx.save();
-    applyWorldTransform(inkCtx);
+inkCtx.globalAlpha = state.opacity;
+applyWorldTransform(inkCtx);
     inkCtx.lineCap = "round";
     inkCtx.lineJoin = "round";
 
@@ -1904,6 +1908,11 @@
   });
   colorInput?.addEventListener("input", () => setColor(colorInput.value));
   brushSize?.addEventListener("input", () => setBrushSize(brushSize.value));
+
+   opacityRange?.addEventListener("input", () => {
+  state.opacity = parseFloat(opacityRange.value);
+  opacityOut.textContent = Math.round(state.opacity * 100) + "%";
+});
 
   function openSettings(open) {
     const isOpen = open ?? settingsPanel.classList.contains("is-hidden");
