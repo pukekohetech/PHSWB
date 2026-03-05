@@ -2317,33 +2317,39 @@
     }
 
 if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
-      e.preventDefault();
-      const total = svgReveal.partIndices.length;
-      if (!total) return;
+  e.preventDefault();
 
-      if (e.key === ".") {
-        while (svgReveal.revealed < total) {
-          const idx = svgReveal.partIndices[svgReveal.revealed++];
-          const obj = state.objects[idx];
-          if (obj) { obj.hidden = false; break; }
-        }
-        redrawAll();
-        showToast(`SVG: ${Math.min(svgReveal.revealed, total)}/${total}`);
-        return;
-      }
+  const indices = getSvgGroupIndices();
+  const total = indices.length;
+  if (!total) { showToast("SVG: nothing to reveal"); return; }
 
-      if (e.key === ",") {
-        while (svgReveal.revealed > 0) {
-          const idx = svgReveal.partIndices[--svgReveal.revealed];
-          const obj = state.objects[idx];
-          if (obj) { obj.hidden = true; break; }
-        }
-        redrawAll();
-        showToast(`SVG: ${Math.max(svgReveal.revealed, 0)}/${total}`);
-        return;
-      }
+  // keep revealed pointer valid even if objects were deleted/added
+  svgReveal.revealed = clamp(svgReveal.revealed, 0, total);
+
+  if (e.key === ".") {
+    // reveal next hidden part
+    while (svgReveal.revealed < total) {
+      const idx = indices[svgReveal.revealed++];
+      const obj = state.objects[idx];
+      if (obj) { obj.hidden = false; break; }
     }
+    redrawAll();
+    showToast(`SVG: ${svgReveal.revealed}/${total}`);
+    return;
+  }
 
+  if (e.key === ",") {
+    // hide previous revealed part
+    while (svgReveal.revealed > 0) {
+      const idx = indices[--svgReveal.revealed];
+      const obj = state.objects[idx];
+      if (obj) { obj.hidden = true; break; }
+    }
+    redrawAll();
+    showToast(`SVG: ${svgReveal.revealed}/${total}`);
+    return;
+  }
+}
     // Delete selection
     if (!typing && (e.key === "Delete" || e.key === "Backspace")) {
       if (state.selectionIndex >= 0) {
