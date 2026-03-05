@@ -482,6 +482,26 @@ applyWorldTransform(inkCtx);
     inkCtx.lineCap = "round";
     inkCtx.lineJoin = "round";
 
+if (obj.kind === "polyFill") {
+  inkCtx.save();
+  inkCtx.globalCompositeOperation = "source-over";
+  inkCtx.globalAlpha = (obj.opacity ?? 1);
+  applyWorldTransform(inkCtx);
+
+  const pts = obj.pts || [];
+  if (pts.length >= 3) {
+    inkCtx.beginPath();
+    inkCtx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) inkCtx.lineTo(pts[i].x, pts[i].y);
+    inkCtx.closePath();
+    inkCtx.fillStyle = obj.fill || obj.color || "#000";
+    inkCtx.fill();
+  }
+
+  inkCtx.restore();
+  return;
+}
+     
      if (obj.kind === "fillBitmap") {
   inkCtx.globalCompositeOperation = "source-over";
   inkCtx.globalAlpha = (obj.opacity ?? 1);
@@ -2450,10 +2470,16 @@ function floodFillAlphaWalls(imgData, sx, sy, fillRGBA, wallAlpha = 250) {
   if (sx < 0 || sy < 0 || sx >= W || sy >= H) return false;
 
   const idx0 = (sy * W + sx) * 4;
-  const a0 = data[idx0 + 3];
+ // const a0 = data[idx0 + 3];
 
   // If you click on a wall pixel, do nothing
-  if (a0 >= wallAlpha) return false;
+ // if (a0 >= wallAlpha) return false;
+const r0 = data[idx0 + 0];
+const g0 = data[idx0 + 1];
+const b0 = data[idx0 + 2];
+const a0 = data[idx0 + 3];
+
+if (isWall(r0, g0, b0, a0)) return false;
 
   // BFS stack
   const stack = [[sx, sy]];
@@ -2468,11 +2494,13 @@ function floodFillAlphaWalls(imgData, sx, sy, fillRGBA, wallAlpha = 250) {
     visited[p] = 1;
 
     const i = p * 4;
-    const a = data[i + 3];
+   
+const r = data[i + 0];
+const g = data[i + 1];
+const b = data[i + 2];
+const a = data[i + 3];
 
-    // Stop at walls
-    if (a >= wallAlpha) continue;
-
+if (isWall(r, g, b, a)) continue;
     // Fill pixel
     data[i + 0] = fr;
     data[i + 1] = fg;
@@ -2488,6 +2516,16 @@ function floodFillAlphaWalls(imgData, sx, sy, fillRGBA, wallAlpha = 250) {
 
   return true;
 }
+
+   function isWall(r, g, b, a, alphaThreshold = 40, darkThreshold = 60) {
+  // Strong alpha always blocks
+  if (a >= alphaThreshold) return true;
+
+  // Dark colours can also act as walls even if alpha is low
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return lum <= darkThreshold;
+}
+   
    function renderSceneToOffscreen(worldRect, ppw) {
   // worldRect: {x,y,w,h} in WORLD units
   // ppw: pixels per world unit
@@ -2853,6 +2891,13 @@ function floodFillAlphaWalls(imgData, sx, sy, fillRGBA, wallAlpha = 250) {
         currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="${fillAttr}"${fillOp} stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" />`;
         continue;
       }
+
+       if (obj.kind === "polyFill") {
+  const op = (obj.opacity ?? 1);
+  const pts = (obj.pts || []).map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" ");
+  currentLayer += `<polygon points="${pts}" fill="${obj.fill || obj.color}" fill-opacity="${op}" stroke="none" />`;
+  continue;
+}
 
       if (obj.kind === "circle") {
         const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
