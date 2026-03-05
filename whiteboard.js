@@ -2720,9 +2720,25 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
 
     const inkMarkup = pastLayer + currentLayer;
 
+    // Embed a lossless snapshot for perfect round-trip (including eraser order, opacity, etc.).
+    // This does not affect how the SVG renders in other viewers.
+    let meta = "";
+    try {
+      const snapshot = {
+        v: 1,
+        app: "phs-whiteboard",
+        cam: { panX: state.panX, panY: state.panY, zoom: state.zoom },
+        pxPerMm: state.pxPerMm,
+        bg: state.bg ? { ...state.bg } : null,
+        objects: (state.objects || []).map(o => ({ ...o })),
+      };
+      meta = `<metadata id="phs-whiteboard-snapshot" type="application/json">${svgEscape(JSON.stringify(snapshot))}</metadata>`;
+    } catch { /* ignore */ }
+
     const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
      width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+  ${meta}
   <defs>${defs}</defs>
   <rect x="0" y="0" width="${W}" height="${H}" fill="white"/>
   <g transform="${cam}">
@@ -2841,6 +2857,54 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
     const doc = new DOMParser().parseFromString(String(svgText || ""), "image/svg+xml");
     const parsedSvg = doc.querySelector("svg");
     if (!parsedSvg) { showToast("SVG not valid"); return; }
+
+    // Lossless round-trip: if this SVG was exported by this app, prefer the embedded snapshot.
+    // This guarantees show/hide, eraser order, opacity, etc. match exactly what was on-screen.
+    const metaEl = parsedSvg.querySelector("metadata#phs-whiteboard-snapshot");
+    if (metaEl && metaEl.textContent) {
+      try {
+        const snap = JSON.parse(metaEl.textContent);
+        if (snap && snap.app === "phs-whiteboard" && Array.isArray(snap.objects)) {
+          const groupId = "svg_" + Date.now();
+          pushUndo(); clearRedo(); hardResetGesture();
+
+          // Background (if present in snapshot)
+          if (snap.bg && snap.bg.src) {
+            state.bg = { ...state.bg, ...snap.bg };
+            bgImg.src = state.bg.src;
+          }
+
+          // Restore camera so imported SVG overlays exactly as it looked when exported.
+          if (snap.cam && typeof snap.cam.zoom === "number") {
+            state.zoom = snap.cam.zoom;
+            state.panX = snap.cam.panX || 0;
+            state.panY = snap.cam.panY || 0;
+          }
+
+          const startIndex = state.objects.length;
+          for (const o of snap.objects) {
+            const obj = deepClone(o);
+            obj.svgGroupId = groupId;
+            obj.hidden = true;
+            state.objects.push(obj);
+          }
+
+          svgReveal.active = true;
+          svgReveal.groupId = groupId;
+          svgReveal.partIndices = [];
+          svgReveal.revealed = 0;
+          for (let i = startIndex; i < state.objects.length; i++) svgReveal.partIndices.push(i);
+
+          state.selectionIndex = -1;
+          setActiveTool("select");
+          redrawAll();
+          showToast(`SVG imported: 0/${svgReveal.partIndices.length} (→ reveal)`);
+          return;
+        }
+      } catch {
+        // Fall back to best-effort SVG parsing below.
+      }
+    }
 
     const host = ensureHiddenSvgHost();
     host.innerHTML = "";
@@ -3105,4 +3169,3 @@ if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
   ro.observe(stage);
   init();
 })();
-s
