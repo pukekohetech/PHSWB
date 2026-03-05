@@ -3179,28 +3179,31 @@ if (obj.kind === "fillBitmap" && obj.src) {
 
     // background <image>
     let pendingBg = null;
-    const imgEl = svg.querySelector("image");
-    if (imgEl) {
-      const href = imgEl.getAttribute("href") || imgEl.getAttribute("xlink:href") || "";
-      const wAttr = parseNumberAttr(imgEl.getAttribute("width"));
-      const hAttr = parseNumberAttr(imgEl.getAttribute("height"));
-      if (href) {
-        const tf = (imgEl.getAttribute("transform") || "").trim();
-        let x = 0, y = 0, rot = 0, scale = 1;
-        const m = tf.match(
-          /translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)\s*translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)\s*rotate\(\s*([-\d.]+)\s*\)\s*scale\(\s*([-\d.]+)\s*\)\s*translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)\s*$/i
-        );
-        if (m) {
-          x = parseFloat(m[1]) || 0;
-          y = parseFloat(m[2]) || 0;
-          rot = ((parseFloat(m[5]) || 0) * Math.PI) / 180;
-          scale = parseFloat(m[6]) || 1;
-        }
-        pendingBg = { src: String(href), natW: wAttr ?? 0, natH: hAttr ?? 0, x, y, rot, scale };
-      }
+// background <image> (first image that is NOT a fillBitmap)
+let pendingBg = null;
+const imgEls = Array.from(svg.querySelectorAll("image"));
+const bgImgEl = imgEls.find(im => (im.getAttribute("data-kind") || "") !== "fillBitmap");
+if (bgImgEl) {
+  const href = bgImgEl.getAttribute("href") || bgImgEl.getAttribute("xlink:href") || "";
+  const wAttr = parseNumberAttr(bgImgEl.getAttribute("width"));
+  const hAttr = parseNumberAttr(bgImgEl.getAttribute("height"));
+  if (href) {
+    const tf = (bgImgEl.getAttribute("transform") || "").trim();
+    let x = 0, y = 0, rot = 0, scale = 1;
+    const m = tf.match(
+      /translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)\s*translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)\s*rotate\(\s*([-\d.]+)\s*\)\s*scale\(\s*([-\d.]+)\s*\)\s*translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)\s*$/i
+    );
+    if (m) {
+      x = parseFloat(m[1]) || 0;
+      y = parseFloat(m[2]) || 0;
+      rot = ((parseFloat(m[5]) || 0) * Math.PI) / 180;
+      scale = parseFloat(m[6]) || 1;
     }
+    pendingBg = { src: String(href), natW: wAttr ?? 0, natH: hAttr ?? 0, x, y, rot, scale };
+  }
+}
 
-    const els = Array.from(svg.querySelectorAll("path,line,polyline,polygon,rect,circle,ellipse,text"));
+    const els = Array.from(svg.querySelectorAll("image,path,line,polyline,polygon,rect,circle,ellipse,text"));
     if (!els.length && !pendingBg) { showToast("No SVG paths"); return; }
 
     const rootPt = svg.createSVGPoint ? svg.createSVGPoint() : null;
@@ -3250,6 +3253,40 @@ if (obj.kind === "fillBitmap" && obj.src) {
       const color = !isNone(stroke) ? stroke : "#111111";
       const size = strokeWidthOf(el);
        const opacity = opacityOf(el);
+
+       if (tag === "image") {
+  const kind = (el.getAttribute("data-kind") || "");
+  if (kind !== "fillBitmap") continue; // non-fill images are handled as background above
+
+  const href = el.getAttribute("href") || el.getAttribute("xlink:href") || "";
+  if (!href) continue;
+
+  const x = parseNumberAttr(el.getAttribute("x")) ?? 0;
+  const y = parseNumberAttr(el.getAttribute("y")) ?? 0;
+  const wWorld = parseNumberAttr(el.getAttribute("width")) ?? 0;
+  const hWorld = parseNumberAttr(el.getAttribute("height")) ?? 0;
+
+  const ppw = parseNumberAttr(el.getAttribute("data-ppw")) ?? 1;
+  const wpx = parseNumberAttr(el.getAttribute("data-wpx")) ?? Math.round(wWorld * ppw);
+  const hpx = parseNumberAttr(el.getAttribute("data-hpx")) ?? Math.round(hWorld * ppw);
+
+  const op = opacityOf(el);
+
+  // Map top-left through CTM if needed
+  const p = mapCTM(el, x, y);
+
+  parts.push({
+    kind: "fillBitmap",
+    x: p.x,
+    y: p.y,
+    w: Math.max(1, Math.round(wpx)),
+    h: Math.max(1, Math.round(hpx)),
+    ppw: Math.max(0.0001, ppw),
+    opacity: op,
+    src: String(href)
+  });
+  continue;
+}
 
       if (tag === "line") {
         const x1 = parseNumberAttr(el.getAttribute("x1")) ?? 0;
