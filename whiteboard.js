@@ -1643,7 +1643,7 @@ fillBitmapCache.delete(fillObj._id);
 redrawAll();
 showToast("Filled");
 return;
-
+}
     // Text tool
     if (state.tool === "text") {
       gesture.active = false;
