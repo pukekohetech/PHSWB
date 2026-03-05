@@ -2805,7 +2805,8 @@
         const y2 = parseNumberAttr(el.getAttribute("y2")) ?? 0;
         const p1 = mapCTM(el, x1, y1);
         const p2 = mapCTM(el, x2, y2);
-        parts.push({ kind: "line", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        // Preserve SVG opacity on import so round-trip keeps stroke transparency
+        parts.push({ kind: "line", color, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -2816,7 +2817,7 @@
         const h = parseNumberAttr(el.getAttribute("height")) ?? 0;
         const p1 = mapCTM(el, x, y);
         const p2 = mapCTM(el, x + w, y + h);
-        parts.push({ kind: "rect", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "rect", color, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -2826,7 +2827,7 @@
         const r = parseNumberAttr(el.getAttribute("r")) ?? 0;
         const p1 = mapCTM(el, cx - r, cy - r);
         const p2 = mapCTM(el, cx + r, cy + r);
-        parts.push({ kind: "circle", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "circle", color, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -2837,7 +2838,8 @@
         const ry = parseNumberAttr(el.getAttribute("ry")) ?? 0;
         const p1 = mapCTM(el, cx - rx, cy - ry);
         const p2 = mapCTM(el, cx + rx, cy + ry);
-        parts.push({ kind: "circle", color, size, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        // Treat ellipse as circle-ish bounds for our model, but keep opacity
+        parts.push({ kind: "circle", color, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -2850,7 +2852,7 @@
         const pts = [];
         for (let i = 0; i < nums.length - 1; i += 2) pts.push(mapCTM(el, nums[i], nums[i + 1]));
         if (tag === "polygon" && pts.length) pts.push({ ...pts[0] });
-        parts.push({ kind: "stroke", color, size, points: pts });
+        parts.push({ kind: "stroke", color, size, opacity, points: pts });
         continue;
       }
 
@@ -2870,7 +2872,7 @@
           pts.push(mapCTM(el, p.x, p.y));
         }
         if (pts.length < 2) continue;
-        parts.push({ kind: "stroke", color, size, points: pts });
+        parts.push({ kind: "stroke", color, size, opacity, points: pts });
         continue;
       }
 
