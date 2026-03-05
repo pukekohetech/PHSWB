@@ -2546,16 +2546,8 @@ if (isWall(r, g, b, a)) continue;
   return true;
 }
 
-function isWall(r, g, b, a, alphaThreshold = 8, darkThreshold = 80) {
-  // Any visible alpha blocks
-  if (a >= alphaThreshold) return true;
-
-  // If it's fully transparent, it's NOT a wall.
-  if (a === 0) return false;
-
-  // Only for faint-but-visible pixels, optionally treat dark ones as walls
-  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  return lum <= darkThreshold;
+function isWall(r, g, b, a, alphaThreshold = 8) {
+  return a >= alphaThreshold;
 }
    
    function renderSceneToOffscreen(worldRect, ppw) {
