@@ -481,6 +481,10 @@
     // per-object opacity (eraser stays fully opaque)
     const objAlpha = clamp(Number(obj.opacity ?? 1), 0, 1);
 
+    // optional fill (used for filled rect/circle and closed strokes)
+    const hasFill = obj.fill && String(obj.fill).trim() && String(obj.fill).trim().toLowerCase() !== 'none' && String(obj.fill).trim().toLowerCase() !== 'transparent';
+    const fillAlpha = clamp(Number(obj.fillOpacity ?? objAlpha), 0, 1);
+
     if (obj.kind === "stroke") {
       inkCtx.globalCompositeOperation = "source-over";
       inkCtx.globalAlpha = objAlpha;
@@ -492,6 +496,26 @@
         inkCtx.moveTo(pts[0].x, pts[0].y);
         for (let i = 1; i < pts.length; i++) inkCtx.lineTo(pts[i].x, pts[i].y);
       }
+      // fill only if requested and path looks closed-ish
+      if (hasFill && pts.length >= 3) {
+        const dx = pts[0].x - pts[pts.length - 1].x;
+        const dy = pts[0].y - pts[pts.length - 1].y;
+        const closed = Math.hypot(dx, dy) <= Math.max(8, obj.size * 2);
+        if (closed) {
+          inkCtx.save();
+          inkCtx.globalAlpha = fillAlpha;
+          inkCtx.fillStyle = obj.fill;
+          inkCtx.closePath();
+          inkCtx.fill();
+          inkCtx.restore();
+
+          // rebuild stroke path after fill (closePath affects stroke joins)
+          inkCtx.beginPath();
+          inkCtx.moveTo(pts[0].x, pts[0].y);
+          for (let i = 1; i < pts.length; i++) inkCtx.lineTo(pts[i].x, pts[i].y);
+        }
+      }
+
       inkCtx.stroke();
       inkCtx.restore();
       return;
@@ -554,6 +578,13 @@
       inkCtx.save();
       inkCtx.translate(cx, cy);
       if (ang) inkCtx.rotate(ang);
+      if (hasFill) {
+        inkCtx.save();
+        inkCtx.globalAlpha = fillAlpha;
+        inkCtx.fillStyle = obj.fill;
+        inkCtx.fillRect(-rw / 2, -rh / 2, rw, rh);
+        inkCtx.restore();
+      }
       inkCtx.strokeRect(-rw / 2, -rh / 2, rw, rh);
       inkCtx.restore();
     } else if (obj.kind === "circle") {
@@ -564,6 +595,13 @@
       inkCtx.translate(cx, cy);
       inkCtx.beginPath();
       inkCtx.ellipse(0, 0, rx, ry, ang, 0, Math.PI * 2);
+      if (hasFill) {
+        inkCtx.save();
+        inkCtx.globalAlpha = fillAlpha;
+        inkCtx.fillStyle = obj.fill;
+        inkCtx.fill();
+        inkCtx.restore();
+      }
       inkCtx.stroke();
       inkCtx.restore();
     } else if (obj.kind === "arc") {
@@ -595,7 +633,7 @@
   function drawInk() {
     clearCtx(inkCtx, inkCanvas);
     for (const obj of state.objects) {
-      if (obj && !obj.hidden) drawInkObject(obj);
+      if (obj && !obj.hidden && !obj.deleted) drawInkObject(obj);
     }
   }
 
@@ -606,7 +644,63 @@
     const dx = x - cx, dy = y - cy;
     const c = Math.cos(ang), s = Math.sin(ang);
     return { x: cx + dx * c - dy * s, y: cy + dx * s + dy * c };
+  
+
+  function pointSegDist(px, py, x1, y1, x2, y2) {
+    const vx = x2 - x1, vy = y2 - y1;
+    const wx = px - x1, wy = py - y1;
+    const c1 = vx * wx + vy * wy;
+    if (c1 <= 0) return Math.hypot(px - x1, py - y1);
+    const c2 = vx * vx + vy * vy;
+    if (c2 <= c1) return Math.hypot(px - x2, py - y2);
+    const t = c1 / c2;
+    const bx = x1 + t * vx;
+    const by = y1 + t * vy;
+    return Math.hypot(px - bx, py - by);
   }
+
+  function objectNearPoint(obj, p, r) {
+    if (!obj || obj.hidden || obj.deleted) return false;
+    const rr = Math.max(2, r);
+    if (obj.kind === 'stroke') {
+      const pts = obj.points || [];
+      for (let i = 1; i < pts.length; i++) {
+        if (pointSegDist(p.x, p.y, pts[i-1].x, pts[i-1].y, pts[i].x, pts[i].y) <= rr) return true;
+      }
+      return false;
+    }
+    if (obj.kind === 'line' || obj.kind === 'arrow') {
+      return pointSegDist(p.x, p.y, obj.x1, obj.y1, obj.x2, obj.y2) <= rr;
+    }
+    if (obj.kind === 'rect') {
+      const b = objectBounds(obj);
+      return p.x >= b.minX - rr && p.x <= b.maxX + rr && p.y >= b.minY - rr && p.y <= b.maxY + rr;
+    }
+    if (obj.kind === 'circle') {
+      const b = objectBounds(obj);
+      return p.x >= b.minX - rr && p.x <= b.maxX + rr && p.y >= b.minY - rr && p.y <= b.maxY + rr;
+    }
+    if (obj.kind === 'arc') {
+      const b = objectBounds(obj);
+      return p.x >= b.minX - rr && p.x <= b.maxX + rr && p.y >= b.minY - rr && p.y <= b.maxY + rr;
+    }
+    return false;
+  }
+
+  function vectorEraseAtPoint(p, r) {
+    let erasedAny = false;
+    for (let i = state.objects.length - 1; i >= 0; i--) {
+      const o = state.objects[i];
+      if (!o || o.hidden || o.deleted) continue;
+      if (o.kind === 'erase') continue;
+      if (!objectNearPoint(o, p, r)) continue;
+      o.deleted = true;
+      erasedAny = true;
+      // keep erasing; comment next line to only erase one object per move
+    }
+    return erasedAny;
+  }
+}
 
   function arcDelta(a1, a2) {
     const TWO_PI = Math.PI * 2;
@@ -963,7 +1057,7 @@
 
     // Collect endpoints + segments once at pointerdown
     for (const obj of state.objects) {
-      if (!obj || obj.hidden) continue;
+      if (!obj || obj.hidden || obj.deleted) continue;
 
       if (obj.kind === "line" || obj.kind === "arrow") {
         endpoints.push({ x: obj.x1, y: obj.y1 }, { x: obj.x2, y: obj.y2 });
@@ -1612,6 +1706,17 @@
     }
 
     if (state.tool === "eraser") {
+      // If SVG reveal ink is active (show/hide mode), use vector-erase so it persists
+      if (svgReveal.active) {
+        pushUndo(); clearRedo();
+        gesture.activeObj = null;
+        gesture.mode = "vectorErase";
+        gesture.eraserR = Math.max(10, state.size * 2.2);
+        vectorEraseAtPoint(w, gesture.eraserR);
+        redrawAll();
+        return;
+      }
+
       const obj = { kind: "erase", size: Math.max(10, state.size * 2.2), points: [w] };
       state.objects.push(obj);
       gesture.activeObj = obj;
@@ -2190,7 +2295,28 @@
     }
 
     // SVG reveal controls
-    if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
+    
+    // Fill toggle on selection
+    if (!typing && (e.key === 'f' || e.key === 'F') && state.selectionIndex >= 0) {
+      const o = state.objects[state.selectionIndex];
+      if (o && !o.hidden && !o.deleted && ['rect','circle','stroke'].includes(o.kind)) {
+        pushUndo(); clearRedo();
+        if (e.shiftKey) {
+          o.fill = null;
+          o.fillOpacity = null;
+          showToast('Fill cleared');
+        } else {
+          o.fill = state.color;
+          o.fillOpacity = state.opacity;
+          showToast('Filled');
+        }
+        redrawAll();
+        e.preventDefault();
+        return;
+      }
+    }
+
+if (!typing && svgReveal.active && (e.key === "." || e.key === ",")) {
       e.preventDefault();
       const total = svgReveal.partIndices.length;
       if (!total) return;
@@ -2502,7 +2628,7 @@
     }
 
     for (const obj of state.objects) {
-      if (!obj || obj.hidden) continue;
+      if (!obj || obj.hidden || obj.deleted) continue;
 
       if (obj.kind === "erase") {
         const d = pathFromPoints(obj.points || []);
@@ -2513,7 +2639,7 @@
       if (obj.kind === "stroke") {
         const d = pathFromPoints(obj.points || []);
         if (!d) continue;
-        currentLayer += `<path d="${d}" fill="none" stroke="${obj.color}" stroke-linecap="round" stroke-linejoin="round" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}"/>`;
+        currentLayer += `<path d="${d}" fill="${obj.fill ? obj.fill : 'none'}" stroke-linecap="round" stroke-linejoin="round" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}"${obj.fill ? ` fill-opacity="${clamp(Number(obj.fillOpacity ?? obj.opacity ?? 1),0,1).toFixed(3)}"` : ''}/>`;
         continue;
       }
 
@@ -2544,7 +2670,7 @@
         const hy1 = y2 + Math.sin(a1) * headLen;
         const hx2 = x2 + Math.cos(a2) * headLen;
         const hy2 = y2 + Math.sin(a2) * headLen;
-        currentLayer += `<path d="M ${x1} ${y1} L ${x2} ${y2} M ${x2} ${y2} L ${hx1} ${hy1} M ${x2} ${y2} L ${hx2} ${hy2}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" stroke-linecap="round" stroke-linejoin="round" />`;
+        currentLayer += `<path d="M ${x1} ${y1} L ${x2} ${y2} M ${x2} ${y2} L ${hx1} ${hy1} M ${x2} ${y2} L ${hx2} ${hy2}" fill="${obj.fill ? obj.fill : 'none'}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" stroke-linecap="round" stroke-linejoin="round" />`;
         continue;
       }
 
@@ -2553,7 +2679,7 @@
         const rw = Math.abs(w), rh = Math.abs(h);
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" />`;
+        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="${obj.fill ? obj.fill : 'none'}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}"${obj.fill ? ` fill-opacity="${clamp(Number(obj.fillOpacity ?? obj.opacity ?? 1),0,1).toFixed(3)}"` : ''} />`;
         continue;
       }
 
@@ -2562,7 +2688,7 @@
         const rx = Math.abs(w) / 2, ry = Math.abs(h) / 2;
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" />`;
+        currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="${obj.fill ? obj.fill : 'none'}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}"${obj.fill ? ` fill-opacity="${clamp(Number(obj.fillOpacity ?? obj.opacity ?? 1),0,1).toFixed(3)}"` : ''} />`;
         continue;
       }
 
@@ -2574,7 +2700,7 @@
         const rawSpanAbs = Math.abs(a2 - a1);
 
         if (rawSpanAbs >= TWO_PI - 1e-6) {
-          currentLayer += `<circle cx="${obj.cx}" cy="${obj.cy}" r="${obj.r}" fill="none" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" />`;
+          currentLayer += `<circle cx="${obj.cx}" cy="${obj.cy}" r="${obj.r}" fill="${obj.fill ? obj.fill : 'none'}" stroke="${obj.color}" stroke-width="${obj.size}" stroke-opacity="${clamp(Number(obj.opacity ?? 1), 0, 1).toFixed(3)}" />`;
           continue;
         }
 
@@ -2784,11 +2910,15 @@
       const tag = el.tagName.toLowerCase();
       const stroke = el.getAttribute("stroke");
       const fill = el.getAttribute("fill");
+      const fillOpA = parseNumberAttr(attrOrStyle(el, "fill-opacity", "fill-opacity"));
 
       const opA = parseNumberAttr(attrOrStyle(el, "stroke-opacity", "stroke-opacity"));
       const opB = parseNumberAttr(attrOrStyle(el, "opacity", "opacity"));
       const op = isFinite(opA) ? opA : (isFinite(opB) ? opB : 1);
       const opacity = clamp(op, 0, 1);
+
+      const fillColor = (!isNone(fill) ? fill : null);
+      const fillOpacity = isFinite(fillOpA) ? clamp(fillOpA, 0, 1) : opacity;
 
       // ignore white fill-only background rects
       if (tag === "rect" && isNone(stroke) && (String(fill || "").toLowerCase() === "white" || !fill)) continue;
@@ -2817,7 +2947,7 @@
         const h = parseNumberAttr(el.getAttribute("height")) ?? 0;
         const p1 = mapCTM(el, x, y);
         const p2 = mapCTM(el, x + w, y + h);
-        parts.push({ kind: "rect", color, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "rect", color, size, opacity, fill: fillColor, fillOpacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -2827,7 +2957,7 @@
         const r = parseNumberAttr(el.getAttribute("r")) ?? 0;
         const p1 = mapCTM(el, cx - r, cy - r);
         const p2 = mapCTM(el, cx + r, cy + r);
-        parts.push({ kind: "circle", color, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "circle", color, size, opacity, fill: fillColor, fillOpacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -2839,7 +2969,7 @@
         const p1 = mapCTM(el, cx - rx, cy - ry);
         const p2 = mapCTM(el, cx + rx, cy + ry);
         // Treat ellipse as circle-ish bounds for our model, but keep opacity
-        parts.push({ kind: "circle", color, size, opacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
+        parts.push({ kind: "circle", color, size, opacity, fill: fillColor, fillOpacity, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, rot: 0 });
         continue;
       }
 
@@ -2852,7 +2982,7 @@
         const pts = [];
         for (let i = 0; i < nums.length - 1; i += 2) pts.push(mapCTM(el, nums[i], nums[i + 1]));
         if (tag === "polygon" && pts.length) pts.push({ ...pts[0] });
-        parts.push({ kind: "stroke", color, size, opacity, points: pts });
+        parts.push({ kind: "stroke", color, size, opacity, fill: fillColor, fillOpacity, points: pts });
         continue;
       }
 
@@ -2872,7 +3002,7 @@
           pts.push(mapCTM(el, p.x, p.y));
         }
         if (pts.length < 2) continue;
-        parts.push({ kind: "stroke", color, size, opacity, points: pts });
+        parts.push({ kind: "stroke", color, size, opacity, fill: fillColor, fillOpacity, points: pts });
         continue;
       }
 
@@ -2975,3 +3105,4 @@
   ro.observe(stage);
   init();
 })();
+s
