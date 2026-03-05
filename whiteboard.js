@@ -940,8 +940,11 @@ applyWorldTransform(inkCtx);
     const segs = [];
 
     // Collect endpoints + segments once at pointerdown
-    for (const obj of state.objects) {
-      if (!obj || obj.hidden) continue;
+   for (const obj of state.objects) {
+  if (!obj || obj.hidden) continue;
+
+  const op = (obj.opacity ?? 1);
+
 
       if (obj.kind === "line" || obj.kind === "arrow") {
         endpoints.push({ x: obj.x1, y: obj.y1 }, { x: obj.x2, y: obj.y2 });
