@@ -2682,7 +2682,7 @@ const obj = {
   }
 
   function importSvgInkFromText(svgText) {
-     if (el.closest("defs") || el.closest("mask")) continue;
+   
     const doc = new DOMParser().parseFromString(String(svgText || ""), "image/svg+xml");
     const parsedSvg = doc.querySelector("svg");
     if (!parsedSvg) { showToast("SVG not valid"); return; }
@@ -2757,6 +2757,8 @@ const obj = {
     }
 
     for (const el of els) {
+         if (el.closest("defs") || el.closest("mask")) continue;
+       
       const tag = el.tagName.toLowerCase();
       const stroke = el.getAttribute("stroke");
       const fill = el.getAttribute("fill");
