@@ -1613,7 +1613,7 @@ applyWorldTransform(inkCtx);
       }
 
     // const obj = { kind: state.tool, color: state.color, size: state.size, opacity: state.opacity, x1: p0.x, y1: p0.y, x2: p0.x, y2: p0.y, rot: 0 }; //const obj = { kind: state.tool, color: state.color, size: state.size, opacity: state.opacity, x1:..., y1:..., x2:..., y2:..., rot: 0 };
-     const fillHeld = isMac ? e.metaKey : e.ctrlKey;
+    const fillHeld = e.shiftKey;
 
 const obj = {
   kind: state.tool,
