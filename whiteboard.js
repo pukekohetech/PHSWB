@@ -1169,8 +1169,7 @@
     return { x2: x1 + Math.cos(snapped) * len, y2: y1 + Math.sin(snapped) * len };
   }
 
-  const bucketOff = document.createElement("canvas");
-  const bucketCtx = bucketOff.getContext("2d", { willReadFrequently: true });
+
 
   // Intersection helpers
   function segIntersection(a, b) {
@@ -1400,10 +1399,7 @@
       inkCanvas.style.cursor = "alias";
       return;
     }
-    if (t === "bucket") {
-      inkCanvas.style.cursor = "copy";
-      return;
-    }
+   
     inkCanvas.style.cursor = "default";
   }
 
@@ -1874,93 +1870,7 @@
     }
 
     // Bucket tool
-    if (state.tool === "bucket") {
-      gesture.active = false;
-      gesture.mode = "none";
-      try {
-        inkCanvas.releasePointerCapture(e.pointerId);
-      } catch {}
 
-      const z = state.zoom || 1;
-      const marginScreenPx = 120;
-      const marginWorld = marginScreenPx / z;
-
-      const worldLeft = (0 - state.panX) / z - marginWorld;
-      const worldTop = (0 - state.panY) / z - marginWorld;
-      const worldW = state.viewW / z + marginWorld * 2;
-      const worldH = state.viewH / z + marginWorld * 2;
-
-      let ppw = (state.pixelRatio || 1) * z;
-
-      const maxDim = 2600;
-      const needW = worldW * ppw;
-      const needH = worldH * ppw;
-      const scaleDown = Math.max(needW / maxDim, needH / maxDim, 1);
-      ppw = ppw / scaleDown;
-      ppw = Math.max(ppw, 1.5);
-
-      const worldRect = { x: worldLeft, y: worldTop, w: worldW, h: worldH };
-
-      const { off, ctx } = renderSceneToOffscreen(worldRect, ppw);
-
-      const img = ctx.getImageData(0, 0, off.width, off.height);
-
-      dilateWalls(img, 8);
-
-      const px = Math.floor((w.x - worldRect.x) * ppw);
-      const py = Math.floor((w.y - worldRect.y) * ppw);
-
-      const rgb = hexToRgb(state.color);
-      const alpha = Math.round(clamp(state.opacity ?? 1, 0, 1) * 255);
-
-      const ok = floodFillAlphaWalls(img, px, py, [rgb.r, rgb.g, rgb.b, alpha], 250);
-      if (!ok) {
-        showToast("No fill (clicked a wall?)");
-        return;
-      }
-
-      const fillCanvas = document.createElement("canvas");
-      fillCanvas.width = img.width;
-      fillCanvas.height = img.height;
-      const fctx = fillCanvas.getContext("2d", { willReadFrequently: false });
-      fctx.putImageData(img, 0, 0);
-
-      let dataURL = "";
-      try {
-        dataURL = fillCanvas.toDataURL("image/webp", 0.85);
-        if (!dataURL.startsWith("data:image/webp")) throw new Error("no webp");
-      } catch {
-        dataURL = fillCanvas.toDataURL("image/png");
-      }
-
-      pushUndo();
-      clearRedo();
-
-      const fillObj = {
-        kind: "fillBitmap",
-        x: worldRect.x,
-        y: worldRect.y,
-        w: img.width,
-        h: img.height,
-        ppw: ppw,
-        opacity: 1,
-        src: dataURL
-      };
-      ensureObjId(fillObj);
-
-      if (svgReveal.active && svgReveal.groupId) {
-        fillObj.svgGroupId = svgReveal.groupId;
-        fillObj.hidden = true;
-        svgReveal.partIds.splice(svgReveal.revealed, 0, fillObj._id);
-      }
-
-      state.objects.unshift(fillObj);
-      fillBitmapCache.delete(fillObj._id);
-
-      redrawAll();
-      showToast("Filled");
-      return;
-    }
 
     // Text tool
     if (state.tool === "text") {
@@ -2831,7 +2741,7 @@
       if (k === "a") setActiveTool("arrow");
       if (k === "t") setActiveTool("text");
       if (k === "e") setActiveTool("eraser");
-      if (k === "b") setActiveTool("bucket");
+    
       if (k === "k") setActiveTool("polyFill"); // NEW: Polygon Fill hotkey
     }
 
@@ -2949,262 +2859,8 @@
     applySnapshot(data);
   }
 
-  function hexToRgb(hex) {
-    const s = String(hex || "").trim();
-    const m = s.match(/^#?([0-9a-f]{6})$/i);
-    if (!m) return { r: 0, g: 0, b: 0 };
-    const n = parseInt(m[1], 16);
-    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
-  }
 
-  function dilateWalls(imgData, alphaThreshold = 8) {
-    const { width: W, height: H, data } = imgData;
-    const out = new Uint8ClampedArray(data);
 
-    for (let y = 1; y < H - 1; y++) {
-      for (let x = 1; x < W - 1; x++) {
-        const i = (y * W + x) * 4;
-        const a = data[i + 3];
-        if (a >= alphaThreshold) continue;
-
-        let wallNeighbor = false;
-        for (let dy = -1; dy <= 1 && !wallNeighbor; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            if (dx === 0 && dy === 0) continue;
-            const j = ((y + dy) * W + (x + dx)) * 4;
-            if (data[j + 3] >= alphaThreshold) {
-              wallNeighbor = true;
-              break;
-            }
-          }
-        }
-        if (wallNeighbor) out[i + 3] = 255;
-      }
-    }
-
-    data.set(out);
-  }
-
-  // FIXED: floodFillAlphaWalls (no TDZ bug, safe growing stack)
-  function floodFillAlphaWalls(imgData, sx, sy, fillRGBA, wallAlpha = 250) {
-    const { width: W, height: H, data } = imgData;
-    if (sx < 0 || sy < 0 || sx >= W || sy >= H) return false;
-
-    const idx0 = (sy * W + sx) * 4;
-    const a0 = data[idx0 + 3];
-    if (a0 >= wallAlpha) return false;
-
-    const [fr, fg, fb, fa] = fillRGBA;
-
-    const isWallAt = (x, y) => data[(y * W + x) * 4 + 3] >= wallAlpha;
-    const isFilledAt = (x, y) => {
-      const i = (y * W + x) * 4;
-      return data[i + 0] === fr && data[i + 1] === fg && data[i + 2] === fb && data[i + 3] === fa;
-    };
-    const setFillAt = (x, y) => {
-      const i = (y * W + x) * 4;
-      data[i + 0] = fr;
-      data[i + 1] = fg;
-      data[i + 2] = fb;
-      data[i + 3] = fa;
-    };
-
-    let stack = new Int32Array(Math.max(1024, W * 8));
-    let sp = 0;
-
-    const pushSpan = (xl, xr, y, dir) => {
-      if (sp + 4 > stack.length) {
-        const bigger = new Int32Array(stack.length * 2);
-        bigger.set(stack);
-        stack = bigger;
-      }
-      stack[sp++] = xl;
-      stack[sp++] = xr;
-      stack[sp++] = y;
-      stack[sp++] = dir;
-    };
-
-    const findSpan = (x, y) => {
-      let xl = x,
-        xr = x;
-
-      while (xl - 1 >= 0 && !isWallAt(xl - 1, y) && !isFilledAt(xl - 1, y)) xl--;
-      while (xr + 1 < W && !isWallAt(xr + 1, y) && !isFilledAt(xr + 1, y)) xr++;
-
-      for (let xx = xl; xx <= xr; xx++) setFillAt(xx, y);
-      return [xl, xr];
-    };
-
-    const [seedL, seedR] = findSpan(sx, sy);
-    pushSpan(seedL, seedR, sy, -1);
-    pushSpan(seedL, seedR, sy, +1);
-
-    while (sp > 0) {
-      const dir = stack[--sp];
-      const y = stack[--sp];
-      const xr = stack[--sp];
-      const xl = stack[--sp];
-
-      const ny = y + dir;
-      if (ny < 0 || ny >= H) continue;
-
-      let x = xl;
-      while (x <= xr) {
-        while (x <= xr && (isWallAt(x, ny) || isFilledAt(x, ny))) x++;
-        if (x > xr) break;
-
-        const [nl, nr] = findSpan(x, ny);
-        pushSpan(nl, nr, ny, dir);
-        pushSpan(nl, nr, ny, -dir);
-
-        x = nr + 1;
-      }
-    }
-
-    return true;
-  }
-
-  function renderSceneToOffscreen(worldRect, ppw) {
-    const Wpx = Math.max(1, Math.round(worldRect.w * ppw));
-    const Hpx = Math.max(1, Math.round(worldRect.h * ppw));
-
-    bucketOff.width = Wpx;
-    bucketOff.height = Hpx;
-
-    const ctx = bucketCtx;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, Wpx, Hpx);
-
-    ctx.setTransform(ppw, 0, 0, ppw, -worldRect.x * ppw, -worldRect.y * ppw);
-
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-
-    for (const obj of state.objects) {
-      if (!obj || obj.hidden) continue;
-      if (obj.kind === "fillBitmap") continue;
-
-      ctx.globalAlpha = obj.opacity ?? 1;
-
-      if (obj.kind === "erase") {
-        ctx.globalCompositeOperation = "destination-out";
-        ctx.strokeStyle = "rgba(0,0,0,1)";
-        ctx.lineWidth = obj.size || 20;
-        const pts = obj.points || [];
-        if (pts.length >= 2) {
-          ctx.beginPath();
-          ctx.moveTo(pts[0].x, pts[0].y);
-          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-          ctx.stroke();
-        }
-        continue;
-      }
-
-      ctx.globalCompositeOperation = "source-over";
-
-      if (obj.kind === "polyFill") {
-        const pts = obj.pts || [];
-        if (pts.length >= 3) {
-          ctx.fillStyle = obj.fill || obj.color || "#111";
-          ctx.beginPath();
-          ctx.moveTo(pts[0].x, pts[0].y);
-          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-          ctx.closePath();
-          ctx.fill();
-        }
-        continue;
-      }
-
-      if (obj.kind === "stroke") {
-        ctx.strokeStyle = obj.color || "#111";
-        ctx.lineWidth = obj.size || 4;
-        const pts = obj.points || [];
-        if (pts.length >= 2) {
-          ctx.beginPath();
-          ctx.moveTo(pts[0].x, pts[0].y);
-          for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-          ctx.stroke();
-        }
-        continue;
-      }
-
-      if (obj.kind === "line" || obj.kind === "arrow") {
-        ctx.strokeStyle = obj.color || "#111";
-        ctx.lineWidth = obj.size || 4;
-        ctx.beginPath();
-        ctx.moveTo(obj.x1, obj.y1);
-        ctx.lineTo(obj.x2, obj.y2);
-        ctx.stroke();
-        continue;
-      }
-
-      if (obj.kind === "rect") {
-        const x1 = obj.x1,
-          y1 = obj.y1,
-          x2 = obj.x2,
-          y2 = obj.y2;
-        const cx = (x1 + x2) / 2,
-          cy = (y1 + y2) / 2;
-        const rw = Math.abs(x2 - x1),
-          rh = Math.abs(y2 - y1);
-        const ang = obj.rot || 0;
-
-        ctx.save();
-        ctx.translate(cx, cy);
-        if (ang) ctx.rotate(ang);
-
-        if (obj.filled) {
-          ctx.fillStyle = obj.fillColor || obj.color || "#111";
-          ctx.fillRect(-rw / 2, -rh / 2, rw, rh);
-        }
-
-        ctx.strokeStyle = obj.color || "#111";
-        ctx.lineWidth = obj.size || 4;
-        ctx.strokeRect(-rw / 2, -rh / 2, rw, rh);
-        ctx.restore();
-        continue;
-      }
-
-      if (obj.kind === "circle") {
-        const x1 = obj.x1,
-          y1 = obj.y1,
-          x2 = obj.x2,
-          y2 = obj.y2;
-        const cx = (x1 + x2) / 2,
-          cy = (y1 + y2) / 2;
-        const rx = Math.abs(x2 - x1) / 2,
-          ry = Math.abs(y2 - y1) / 2;
-        const ang = obj.rot || 0;
-
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.beginPath();
-        ctx.ellipse(0, 0, rx, ry, ang, 0, Math.PI * 2);
-
-        if (obj.filled) {
-          ctx.fillStyle = obj.fillColor || obj.color || "#111";
-          ctx.fill();
-        }
-
-        ctx.strokeStyle = obj.color || "#111";
-        ctx.lineWidth = obj.size || 4;
-        ctx.stroke();
-        ctx.restore();
-        continue;
-      }
-
-      if (obj.kind === "arc") {
-        ctx.strokeStyle = obj.color || "#111";
-        ctx.lineWidth = obj.size || 4;
-        ctx.beginPath();
-        ctx.arc(obj.cx, obj.cy, Math.max(0.5, obj.r || 0), obj.a1 || 0, obj.a2 || 0, !!obj.ccw);
-        ctx.stroke();
-        continue;
-      }
-    }
-
-    return { off: bucketOff, ctx: bucketCtx };
-  }
 
   function freshBoardSnapshot() {
     return {
