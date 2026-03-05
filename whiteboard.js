@@ -1557,6 +1557,7 @@ if (state.tool === "bucket") {
   const needH = worldH * ppw;
   const scaleDown = Math.max(needW / maxDim, needH / maxDim, 1);
   ppw = ppw / scaleDown;
+   ppw = Math.max(ppw, 1.5);   // ✅ IMPORTANT: keep walls at >= ~1.5px thickness
 
   const worldRect = { x: worldLeft, y: worldTop, w: worldW, h: worldH };
 
@@ -1565,6 +1566,7 @@ if (state.tool === "bucket") {
 
   // Read pixels
   const img = ctx.getImageData(0, 0, off.width, off.height);
+   dilateWalls(img, 8); // 8 = same alpha threshold as isWall default
 
   // Convert click WORLD -> offscreen PIXEL
   const px = Math.floor((w.x - worldRect.x) * ppw);
@@ -2464,6 +2466,33 @@ if (!typing && (e.key === "f" || e.key === "F")) {
 }
 
 // Flood-fill ONLY "empty" pixels (alpha < wallAlpha).
+   function dilateWalls(imgData, alphaThreshold = 8) {
+  const { width: W, height: H, data } = imgData;
+  const out = new Uint8ClampedArray(data); // copy
+
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const i = (y * W + x) * 4;
+      const a = data[i + 3];
+
+      // if already wall, keep it
+      if (a >= alphaThreshold) continue;
+
+      // if any neighbor is wall, make this pixel a wall too (seal cracks)
+      let wallNeighbor = false;
+      for (let dy = -1; dy <= 1 && !wallNeighbor; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const j = ((y + dy) * W + (x + dx)) * 4;
+          if (data[j + 3] >= alphaThreshold) { wallNeighbor = true; break; }
+        }
+      }
+      if (wallNeighbor) out[i + 3] = 255;
+    }
+  }
+
+  data.set(out);
+}
 // Walls are alpha >= wallAlpha (e.g. full opacity strokes).
 function floodFillAlphaWalls(imgData, sx, sy, fillRGBA, wallAlpha = 250) {
   const { width: W, height: H, data } = imgData;
