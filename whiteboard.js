@@ -2911,6 +2911,8 @@ function isWall(r, g, b, a, alphaThreshold = 8) {
         const rw = Math.abs(w), rh = Math.abs(h);
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
+         const fillAttr = obj.filled ? (obj.fillColor || obj.color || "none") : "none";
+const fillOp = obj.filled ? ` fill-opacity="${op}"` : "";
         currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="${fillAttr}"${fillOp} stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" />`;
         continue;
       }
@@ -2927,8 +2929,11 @@ function isWall(r, g, b, a, alphaThreshold = 8) {
         const rx = Math.abs(w) / 2, ry = Math.abs(h) / 2;
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="none" fill="${fillAttr}"${fillOp} stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" />`;
-        continue;
+      const fillAttr = obj.filled ? (obj.fillColor || obj.color || "none") : "none";
+  const fillOp = obj.filled ? ` fill-opacity="${op}"` : "";
+
+  currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="${fillAttr}"${fillOp} stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" />`;
+  continue;   
       }
 
       if (obj.kind === "arc") {
