@@ -2573,7 +2573,7 @@ function floodFillAlphaWalls(imgData, sx, sy, fillRGBA, wallAlpha = 250) {
 
   const pushSpan = (xl, xr, y, dir) => {
     // grow stack if needed
-    if (sp + 4 > stack.length) {
+  if (sp + 4 > stackRef.length) {
       const bigger = new Int32Array(stack.length * 2);
       bigger.set(stack);
       // swap
@@ -3186,8 +3186,7 @@ if (obj.kind === "fillBitmap" && obj.src) {
 
     // background <image>
     let pendingBg = null;
-// background <image> (first image that is NOT a fillBitmap)
-let pendingBg = null;
+
 const imgEls = Array.from(svg.querySelectorAll("image"));
 const bgImgEl = imgEls.find(im => (im.getAttribute("data-kind") || "") !== "fillBitmap");
 if (bgImgEl) {
