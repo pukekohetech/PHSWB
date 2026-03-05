@@ -1870,7 +1870,7 @@ const obj = {
       else if (k === "rect" || k === "circle") p2 = snapShapePoint(startPt, p2, bypassSnap);
 
       // Shift perfect circle
-      if (k === "circle" && e.shiftKey) {
+      if (k === "circle" && e.altKey) {
         const dx = p2.x - startPt.x;
         const dy = p2.y - startPt.y;
         const sgnX = dx >= 0 ? 1 : -1;
@@ -2544,7 +2544,7 @@ const obj = {
         const rw = Math.abs(w), rh = Math.abs(h);
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="none" stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" />`;
+        currentLayer += `<rect x="${-rw / 2}" y="${-rh / 2}" width="${rw}" height="${rh}" transform="${t}" fill="${fillAttr}"${fillOp} stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" />`;
         continue;
       }
 
@@ -2553,7 +2553,7 @@ const obj = {
         const rx = Math.abs(w) / 2, ry = Math.abs(h) / 2;
         const ang = ((obj.rot || 0) * 180) / Math.PI;
         const t = `translate(${cx} ${cy}) rotate(${ang})`;
-        currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="none" stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" />`;
+        currentLayer += `<ellipse cx="0" cy="0" rx="${rx}" ry="${ry}" transform="${t}" fill="none" fill="${fillAttr}"${fillOp} stroke="${obj.color}" stroke-opacity="${op}" stroke-width="${obj.size}" />`;
         continue;
       }
 
