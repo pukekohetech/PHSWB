@@ -1575,7 +1575,7 @@ if (state.tool === "bucket") {
   const rgb = hexToRgb(state.color);
   const alpha = Math.round(clamp(state.opacity ?? 1, 0, 1) * 255);
 
-  const ok = floodFillAlphaWalls(img, px, py, [rgb.r, rgb.g, rgb.b, alpha], 250);
+  const ok = floodFillAlphaWalls(img, px, py, [rgb.r, rgb.g, rgb.b, alpha]);
   if (!ok) { showToast("No fill (clicked a wall?)"); return; }
 
   // Save fill as world-space bitmap object
