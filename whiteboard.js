@@ -512,27 +512,28 @@ if (obj.kind === "fillBitmap") {
 
   let entry = fillBitmapCache.get(id);
   if (!entry || entry.src !== src) {
-    const img = new Image();
-    entry = { img, src, ready: false };
+    entry = { src, bitmap: null, ready: false };
     fillBitmapCache.set(id, entry);
 
-    img.onload = () => {
-      entry.ready = true;
-      // redraw once the PNG is decoded
-      redrawAll();
-    };
-    img.onerror = () => {
-      // keep it non-fatal
-      entry.ready = false;
-    };
-    img.src = src;
+    // Decode once (much faster than drawing <img> repeatedly)
+    (async () => {
+      try {
+        const blob = await (await fetch(src)).blob();
+        const bmp = await createImageBitmap(blob);
+        entry.bitmap = bmp;
+        entry.ready = true;
+        redrawAll();
+      } catch {
+        entry.ready = false;
+      }
+    })();
   }
 
-  if (entry.ready) {
+  if (entry.ready && entry.bitmap) {
     const ppw = obj.ppw || 1; // pixels per world unit
     const wWorld = (obj.w || 1) / ppw;
     const hWorld = (obj.h || 1) / ppw;
-    inkCtx.drawImage(entry.img, obj.x, obj.y, wWorld, hWorld);
+    inkCtx.drawImage(entry.bitmap, obj.x, obj.y, wWorld, hWorld);
   }
 
   inkCtx.restore();
@@ -1002,6 +1003,9 @@ if (obj.kind === "fillBitmap") {
     return { x2: x1 + Math.cos(snapped) * len, y2: y1 + Math.sin(snapped) * len };
   }
 
+const bucketOff = document.createElement("canvas");
+const bucketCtx = bucketOff.getContext("2d", { willReadFrequently: true });
+   
   // Intersection helpers
   function segIntersection(a, b) {
     const x1 = a.x1, y1 = a.y1, x2 = a.x2, y2 = a.y2;
@@ -1583,50 +1587,55 @@ if (state.tool === "bucket") {
   // Optional crack sealing (keep your behavior)
   dilateWalls(img, 8);
 
-  // Convert click WORLD -> offscreen PIXEL
-  const px = Math.floor((w.x - worldRect.x) * ppw);
-  const py = Math.floor((w.y - worldRect.y) * ppw);
+ // Convert click WORLD -> offscreen PIXEL
+const px = Math.floor((w.x - worldRect.x) * ppw);
+const py = Math.floor((w.y - worldRect.y) * ppw);
 
-  const rgb = hexToRgb(state.color);
-  const alpha = Math.round(clamp(state.opacity ?? 1, 0, 1) * 255);
+const rgb = hexToRgb(state.color);
+const alpha = Math.round(clamp(state.opacity ?? 1, 0, 1) * 255);
 
-  const ok = floodFillAlphaWalls(img, px, py, [rgb.r, rgb.g, rgb.b, alpha], 250);
-  if (!ok) { showToast("No fill (clicked a wall?)"); return; }
+const ok = floodFillAlphaWalls(img, px, py, [rgb.r, rgb.g, rgb.b, alpha], 250);
+if (!ok) { showToast("No fill (clicked a wall?)"); return; }
 
-  // ✅ Store fill as PNG dataURL (compressed + JSON-safe for undo/boards)
-  const fillCanvas = document.createElement("canvas");
-  fillCanvas.width = img.width;
-  fillCanvas.height = img.height;
-  const fctx = fillCanvas.getContext("2d", { willReadFrequently: false });
-  fctx.putImageData(img, 0, 0);
+// ✅ Store fill as WEBP if possible (smaller + faster), fallback to PNG
+const fillCanvas = document.createElement("canvas");
+fillCanvas.width = img.width;
+fillCanvas.height = img.height;
+const fctx = fillCanvas.getContext("2d", { willReadFrequently: false });
+fctx.putImageData(img, 0, 0);
 
-  // PNG compresses massively vs raw RGBA arrays
-  const dataURL = fillCanvas.toDataURL("image/png");
-
-  pushUndo(); clearRedo();
-
-  const fillObj = {
-    kind: "fillBitmap",
-    x: worldRect.x,
-    y: worldRect.y,
-    w: img.width,
-    h: img.height,
-    ppw: ppw,
-    opacity: 1,
-    src: dataURL
-  };
-  ensureObjId(fillObj);
-
-  // Put behind everything so outlines stay on top
-  state.objects.unshift(fillObj);
-
-  // cache invalidation for that id
-  fillBitmapCache.delete(fillObj._id);
-
-  redrawAll();
-  showToast("Filled");
-  return;
+let dataURL = "";
+try {
+  dataURL = fillCanvas.toDataURL("image/webp", 0.85);
+  if (!dataURL.startsWith("data:image/webp")) throw new Error("no webp");
+} catch {
+  dataURL = fillCanvas.toDataURL("image/png");
 }
+
+// ✅ one undo snapshot for the fill insert (remove any earlier pushUndo in bucket path)
+pushUndo(); clearRedo();
+
+const fillObj = {
+  kind: "fillBitmap",
+  x: worldRect.x,
+  y: worldRect.y,
+  w: img.width,
+  h: img.height,
+  ppw: ppw,
+  opacity: 1,
+  src: dataURL
+};
+ensureObjId(fillObj);
+
+// Put behind everything so outlines stay on top
+state.objects.unshift(fillObj);
+
+// cache invalidation for that id
+fillBitmapCache.delete(fillObj._id);
+
+redrawAll();
+showToast("Filled");
+return;
 
     // Text tool
     if (state.tool === "text") {
@@ -2621,39 +2630,33 @@ function isWall(r, g, b, a, alphaThreshold = 8) {
   return a >= alphaThreshold;
 }
    
-   function renderSceneToOffscreen(worldRect, ppw) {
-  // worldRect: {x,y,w,h} in WORLD units
-  // ppw: pixels per world unit
+function renderSceneToOffscreen(worldRect, ppw) {
   const Wpx = Math.max(1, Math.round(worldRect.w * ppw));
   const Hpx = Math.max(1, Math.round(worldRect.h * ppw));
 
-  const off = document.createElement("canvas");
-  off.width = Wpx;
-  off.height = Hpx;
-  const ctx = off.getContext("2d");
+  // reuse (huge win)
+  bucketOff.width = Wpx;
+  bucketOff.height = Hpx;
 
-  // Transform: world -> offscreen pixels
+  const ctx = bucketCtx;
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0, 0, Wpx, Hpx);
+
   ctx.setTransform(ppw, 0, 0, ppw, -worldRect.x * ppw, -worldRect.y * ppw);
 
-  // Draw all objects in correct compositing order (erase uses destination-out)
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
   for (const obj of state.objects) {
     if (!obj || obj.hidden) continue;
+    if (obj.kind === "fillBitmap") continue; // keep your rule
 
-    // NOTE: we intentionally do NOT draw previous fills as "walls" unless you want them to block.
-    // If you DO want fills to block, remove this.
-    if (obj.kind === "fillBitmap") continue;
-
-    const op = (obj.opacity ?? 1);
-    ctx.globalAlpha = op;
+    ctx.globalAlpha = (obj.opacity ?? 1);
 
     if (obj.kind === "erase") {
       ctx.globalCompositeOperation = "destination-out";
       ctx.strokeStyle = "rgba(0,0,0,1)";
       ctx.lineWidth = obj.size || 20;
-
       const pts = obj.points || [];
       if (pts.length >= 2) {
         ctx.beginPath();
@@ -2699,7 +2702,6 @@ function isWall(r, g, b, a, alphaThreshold = 8) {
       ctx.translate(cx, cy);
       if (ang) ctx.rotate(ang);
 
-      // draw fill if present
       if (obj.filled) {
         ctx.fillStyle = obj.fillColor || obj.color || "#111";
         ctx.fillRect(-rw / 2, -rh / 2, rw, rh);
@@ -2720,7 +2722,6 @@ function isWall(r, g, b, a, alphaThreshold = 8) {
 
       ctx.save();
       ctx.translate(cx, cy);
-
       ctx.beginPath();
       ctx.ellipse(0, 0, rx, ry, ang, 0, Math.PI * 2);
 
@@ -2744,12 +2745,9 @@ function isWall(r, g, b, a, alphaThreshold = 8) {
       ctx.stroke();
       continue;
     }
-
-    // text not needed for walls; skip or include if you want it to block
   }
 
-  // return the offscreen + ctx
-  return { off, ctx };
+  return { off: bucketOff, ctx: bucketCtx };
 }
   function freshBoardSnapshot() {
     return {
@@ -2995,15 +2993,22 @@ const fillOp = obj.filled ? ` fill-opacity="${op}"` : "";
   currentLayer += `<polygon points="${pts}" fill="${obj.fill || obj.color}" fill-opacity="${op}" stroke="none" />`;
   continue;
 }
-       if (obj.kind === "fillBitmap" && obj.src) {
+if (obj.kind === "fillBitmap" && obj.src) {
   const op = (obj.opacity ?? 1);
   const ppw = obj.ppw || 1;
   const wWorld = (obj.w || 1) / ppw;
   const hWorld = (obj.h || 1) / ppw;
 
-  currentLayer += `<image href="${obj.src}" xlink:href="${obj.src}"
-      x="${obj.x}" y="${obj.y}" width="${wWorld}" height="${hWorld}"
-      opacity="${op}" />`;
+  // ✅ data-kind + data-ppw + pixel dims so importer can rebuild fillBitmap correctly
+  currentLayer += `<image
+    href="${obj.src}" xlink:href="${obj.src}"
+    x="${obj.x}" y="${obj.y}" width="${wWorld}" height="${hWorld}"
+    opacity="${op}"
+    data-kind="fillBitmap"
+    data-ppw="${ppw}"
+    data-wpx="${obj.w || 0}"
+    data-hpx="${obj.h || 0}"
+  />`;
   continue;
 }
 
