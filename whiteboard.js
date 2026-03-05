@@ -2090,6 +2090,30 @@ const obj = {
       e.preventDefault();
       return;
     }
+     // Toggle fill on selected rect/circle
+if (!typing && (e.key === "f" || e.key === "F")) {
+  const idx = state.selectionIndex;
+  const obj = idx >= 0 ? state.objects[idx] : null;
+
+  if (obj && (obj.kind === "rect" || obj.kind === "circle")) {
+    e.preventDefault();
+    pushUndo(); clearRedo();
+
+    if (e.altKey) {
+      obj.filled = false;
+    } else if (e.shiftKey) {
+      obj.filled = true;
+      obj.fillColor = state.color;
+    } else {
+      obj.filled = !obj.filled;
+      if (obj.filled && !obj.fillColor) obj.fillColor = obj.color;
+    }
+
+    redrawAll();
+    showToast(obj.filled ? "Filled" : "Unfilled");
+  }
+  return;
+}
 
     // While dragging ARC: type-to-set radius
     if (!typing && gesture.active && gesture.mode === "drawArc" && gesture.activeObj?.kind === "arc") {
