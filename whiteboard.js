@@ -1647,7 +1647,7 @@
 
     // Arc tool (2-stage)
     if (state.tool === "arc") {
-      const ctrlHeld = isMac ? e.metaKey : e.ctrlKey;
+      const ctrlHeld = isMac ? !(e.metaKey : e.ctrlKey);
 
       if (!arcDraft.hasCenter) {
         const c = snapShapePoint(w, w, ctrlHeld); // start=raw ok
@@ -1726,7 +1726,7 @@
     }
 
     if (["line", "rect", "circle", "arrow"].includes(state.tool)) {
-      const ctrlHeld = isMac ? e.metaKey : e.ctrlKey;
+      const ctrlHeld = isMac ? !(e.metaKey : e.ctrlKey);
 
       // start point: prefer endpoints/intersections; else mm grid
       let p0 = snapPointPreferEndsIntersections(w);
@@ -1800,7 +1800,7 @@
 
     // Arc hover radius tip after center set (before drag)
     if (state.tool === "arc" && arcDraft.hasCenter && !gesture.active) {
-      const ctrlHeld = isMac ? e.metaKey : e.ctrlKey;
+      const ctrlHeld = isMac ? !(e.metaKey : e.ctrlKey);
       const start = { x: arcDraft.cx, y: arcDraft.cy };
       const p = snapShapePoint(start, w, ctrlHeld);
       const rMm = Math.hypot(p.x - arcDraft.cx, p.y - arcDraft.cy) / pxPerMm();
@@ -1917,7 +1917,7 @@
 
     // Arc drawing
     if (gesture.mode === "drawArc" && gesture.activeObj && gesture.arcCenter) {
-      const ctrlHeld = isMac ? e.metaKey : e.ctrlKey;
+      const ctrlHeld = isMac ? !(e.metaKey : e.ctrlKey);
       const cx = gesture.arcCenter.cx, cy = gesture.arcCenter.cy;
       let p = snapShapePoint({ x: cx, y: cy }, w, ctrlHeld);
 
@@ -1965,7 +1965,7 @@
     // Shape drawing
     if (gesture.mode === "drawShape" && gesture.activeObj) {
       const k = gesture.activeObj.kind;
-      const ctrlHeld = isMac ? e.metaKey : e.ctrlKey;
+      const ctrlHeld = isMac ? !(e.metaKey : e.ctrlKey);
 
       const startPt = { x: gesture.activeObj.x1, y: gesture.activeObj.y1 };
       let p2 = { x: w.x, y: w.y };
