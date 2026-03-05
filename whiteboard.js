@@ -1627,6 +1627,13 @@ const fillObj = {
 };
 ensureObjId(fillObj);
 
+   if (svgReveal.active && svgReveal.groupId) {
+  fillObj.svgGroupId = svgReveal.groupId;
+  // Put it at the NEXT reveal position by hiding it initially
+  fillObj.hidden = true;
+  svgReveal.partIds.splice(svgReveal.revealed, 0, fillObj._id);
+}
+
 // Put behind everything so outlines stay on top
 state.objects.unshift(fillObj);
 
