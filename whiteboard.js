@@ -2895,41 +2895,33 @@
     }
 
     // SVG reveal controls
-    // SVG reveal controls
-    const isRevealKey = e.key === "." || e.key === "," || e.code === "Period" || e.code === "Comma" || e.code === "NumpadDecimal";
+
+    const isRevealKey =
+      !e.shiftKey &&
+      (e.key === "." || e.key === "," || e.code === "Period" || e.code === "Comma" || e.code === "NumpadDecimal");
+
     if (!typing && svgReveal.active && isRevealKey) {
       e.preventDefault();
+
+      if (svgPlayback.running) stopSvgPlayback(true);
+
       const total = svgReveal.partIds.length;
       if (!total) return;
 
       if (e.key === "." || e.code === "Period" || e.code === "NumpadDecimal") {
-        while (svgReveal.revealed < total) {
-          const id = svgReveal.partIds[svgReveal.revealed++];
-          const obj = findObjById(id);
-          if (obj) {
-            obj.hidden = false;
-            break;
-          }
-        }
-        redrawAll();
+        revealNextSvgPart();
         showToast(`SVG: ${Math.min(svgReveal.revealed, total)}/${total}`);
         return;
       }
 
       if (e.key === "," || e.code === "Comma") {
-        while (svgReveal.revealed > 0) {
-          const id = svgReveal.partIds[--svgReveal.revealed];
-          const obj = findObjById(id);
-          if (obj) {
-            obj.hidden = true;
-            break;
-          }
-        }
-        redrawAll();
+        hidePrevSvgPart();
         showToast(`SVG: ${Math.max(svgReveal.revealed, 0)}/${total}`);
         return;
       }
     }
+
+     
     // Delete selection
     if (!typing && (e.key === "Delete" || e.key === "Backspace")) {
       if (state.selectionIndex >= 0) {
