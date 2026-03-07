@@ -73,6 +73,9 @@
   const settingsPanel = document.getElementById("settingsPanel");
   const settingsCloseBtn = document.getElementById("settingsCloseBtn");
 
+   const printBtn = document.getElementById("printBtn");
+printBtn?.addEventListener("click", printCurrentBoard);
+
   const titleInput = document.getElementById("titleInput");
   const applyTitleBtn = document.getElementById("applyTitleBtn");
 
@@ -3075,7 +3078,7 @@ function startSvgPlayback() {
     state.redo = [];
     applySnapshot(data);
   }
-async function printCurrentExport() {
+async function printCurrentBoard() {
   const doc = buildExportSvgDocument();
   if (!doc) {
     showToast("Nothing to print");
@@ -3084,80 +3087,57 @@ async function printCurrentExport() {
 
   const scale = dpr();
   const out = document.createElement("canvas");
-  out.width = Math.max(1, Math.ceil(doc.W * scale));
-  out.height = Math.max(1, Math.ceil(doc.H * scale));
+  out.width = Math.ceil(doc.W * scale);
+  out.height = Math.ceil(doc.H * scale);
 
-  const octx = out.getContext("2d");
-  octx.setTransform(scale, 0, 0, scale, 0, 0);
+  const ctx = out.getContext("2d");
+  ctx.setTransform(scale,0,0,scale,0,0);
 
   const blob = new Blob([doc.svg], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-  const img = new Image();
 
-  const loaded = await new Promise(resolve => {
-    img.onload = () => resolve(true);
-    img.onerror = () => resolve(false);
+  const img = new Image();
+  await new Promise((resolve,reject)=>{
+    img.onload = resolve;
+    img.onerror = reject;
     img.src = url;
   });
 
-  if (!loaded) {
-    URL.revokeObjectURL(url);
-    showToast("Print failed");
-    return;
-  }
-
-  octx.drawImage(img, 0, 0, doc.W, doc.H);
+  ctx.drawImage(img,0,0,doc.W,doc.H);
   URL.revokeObjectURL(url);
 
   const dataUrl = out.toDataURL("image/png");
 
-  const w = window.open("", "_blank");
-  if (!w) {
-    showToast("Popup blocked");
-    return;
-  }
-
-  w.document.write(`
-    <!doctype html>
+  const win = window.open("", "_blank");
+  win.document.write(`
     <html>
     <head>
       <title>Print</title>
       <style>
-        html, body {
-          margin: 0;
-          padding: 0;
-          background: white;
+        html,body{
+          margin:0;
+          background:white;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          height:100%;
         }
-        body {
-          display: flex;
-          align-items: center;
-          justify-content: center;
+        img{
+          max-width:100%;
+          max-height:100%;
         }
-        img {
-          max-width: 100vw;
-          max-height: 100vh;
-          width: auto;
-          height: auto;
-          display: block;
-        }
-        @page {
-          margin: 0;
-        }
+        @page{ margin:0; }
       </style>
     </head>
     <body>
-      <img src="${dataUrl}" alt="Print export">
+      <img src="${dataUrl}">
       <script>
-        window.onload = () => {
-          setTimeout(() => {
-            window.print();
-          }, 100);
-        };
-      </script>
+        window.onload = () => setTimeout(()=>window.print(),150);
+      <\/script>
     </body>
     </html>
   `);
-  w.document.close();
+  win.document.close();
 }
 
 
