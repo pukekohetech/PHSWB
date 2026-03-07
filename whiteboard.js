@@ -203,6 +203,161 @@
     if (!id) return null;
     return state.objects.find(o => o && o._id === id) || null;
   }
+  const svgPlayback = {
+    running: false,
+    timer: 0,
+    token: 0,
+    stepMs: 1000,    // 1 second between reveals
+    endPauseMs: 5000 // 5 seconds at the end
+  };
+
+  function clearSvgPlaybackTimer() {
+    if (svgPlayback.timer) {
+      clearTimeout(svgPlayback.timer);
+      svgPlayback.timer = 0;
+    }
+  }
+
+  function revealNextSvgPart() {
+    const total = svgReveal.partIds.length;
+    while (svgReveal.revealed < total) {
+      const id = svgReveal.partIds[svgReveal.revealed++];
+      const obj = findObjById(id);
+      if (obj) {
+        obj.hidden = false;
+        redrawAll();
+        return true;
+      }
+    }
+    redrawAll();
+    return false;
+  }
+
+  function hidePrevSvgPart() {
+    while (svgReveal.revealed > 0) {
+      const id = svgReveal.partIds[--svgReveal.revealed];
+      const obj = findObjById(id);
+      if (obj) {
+        obj.hidden = true;
+        redrawAll();
+        return true;
+      }
+    }
+    redrawAll();
+    return false;
+  }
+
+  function setSvgRevealCount(nextCount) {
+    const total = svgReveal.partIds.length;
+    const target = clamp(Math.round(nextCount), 0, total);
+
+    while (svgReveal.revealed < target) {
+      const id = svgReveal.partIds[svgReveal.revealed++];
+      const obj = findObjById(id);
+      if (obj) obj.hidden = false;
+    }
+    while (svgReveal.revealed > target) {
+      const id = svgReveal.partIds[--svgReveal.revealed];
+      const obj = findObjById(id);
+      if (obj) obj.hidden = true;
+    }
+
+    redrawAll();
+  }
+
+  function stopSvgPlayback(silent = false) {
+    const wasRunning = svgPlayback.running || !!svgPlayback.timer;
+    svgPlayback.running = false;
+    svgPlayback.token += 1;
+    clearSvgPlaybackTimer();
+    if (wasRunning && !silent) showToast("Presentation stopped");
+  }
+
+  function resetSvgRevealState() {
+    stopSvgPlayback(true);
+    svgReveal.active = false;
+    svgReveal.groupId = null;
+    svgReveal.partIds = [];
+    svgReveal.revealed = 0;
+  }
+
+  function scheduleSvgPlayback(ms, token, fn) {
+    clearSvgPlaybackTimer();
+    svgPlayback.timer = setTimeout(() => {
+      svgPlayback.timer = 0;
+      if (!svgPlayback.running) return;
+      if (token !== svgPlayback.token) return;
+      fn();
+    }, Math.max(0, ms));
+  }
+
+  function svgPlaybackTick(token) {
+    if (!svgPlayback.running || token !== svgPlayback.token) return;
+
+    if (!svgReveal.active || !svgReveal.partIds.length) {
+      stopSvgPlayback(true);
+      showToast("No SVG reveal loaded");
+      return;
+    }
+
+    if (revealNextSvgPart()) {
+      scheduleSvgPlayback(svgPlayback.stepMs, token, () => svgPlaybackTick(token));
+      return;
+    }
+
+    scheduleSvgPlayback(svgPlayback.endPauseMs, token, () => {
+      if (!svgPlayback.running || token !== svgPlayback.token) return;
+      setSvgRevealCount(0);
+      scheduleSvgPlayback(svgPlayback.stepMs, token, () => svgPlaybackTick(token));
+    });
+  }
+
+  function startSvgPlayback() {
+    if (!svgReveal.active || !svgReveal.partIds.length) {
+      showToast("Import SVG reveal first");
+      return;
+    }
+
+    stopSvgPlayback(true);
+    setSvgRevealCount(0);
+
+    svgPlayback.running = true;
+    svgPlayback.token += 1;
+    const token = svgPlayback.token;
+
+    showToast(`Presentation ▶ ${(svgPlayback.stepMs / 1000).toFixed(1)}s step`);
+    svgPlaybackTick(token);
+  }
+
+  function toggleSvgPlayback() {
+    if (svgPlayback.running) stopSvgPlayback();
+    else startSvgPlayback();
+  }
+
+  function configureSvgPlayback() {
+    const stepStr = prompt("Seconds between reveal steps:", String(svgPlayback.stepMs / 1000));
+    if (stepStr == null) return;
+
+    const stepSec = parseFloat(String(stepStr).replace(/[^0-9.+-]/g, ""));
+    if (!isFinite(stepSec) || stepSec <= 0) {
+      showToast("Invalid step time");
+      return;
+    }
+
+    const endStr = prompt("Seconds to pause at the end:", String(svgPlayback.endPauseMs / 1000));
+    if (endStr == null) return;
+
+    const endSec = parseFloat(String(endStr).replace(/[^0-9.+-]/g, ""));
+    if (!isFinite(endSec) || endSec < 0) {
+      showToast("Invalid end pause");
+      return;
+    }
+
+    svgPlayback.stepMs = Math.max(50, Math.round(stepSec * 1000));
+    svgPlayback.endPauseMs = Math.max(0, Math.round(endSec * 1000));
+
+    showToast(`Step ${stepSec}s • End ${endSec}s`);
+  }
 
   // Arc draft (two-stage center pick)
   const arcDraft = { hasCenter: false, cx: 0, cy: 0 };
@@ -2451,6 +2606,7 @@
     clearRedo();
     hardResetGesture();
     cancelPolyDraft();
+    resetSvgRevealState();
     state.objects = [];
     state.selectionIndex = -1;
     setActiveTool("pen");
@@ -2570,12 +2726,18 @@
     }
 
     // Escape
+    // Escape
     if (e.key === "Escape") {
+      const wasPlaying = svgPlayback.running;
+      stopSvgPlayback(true);
+
       openSettings(false);
       toggleColorPop(false);
       arcDraft.hasCenter = false;
       hideMeasureTip();
       closeLenBox();
+
+      if (wasPlaying) showToast("Presentation stopped");
       return;
     }
 
@@ -2719,6 +2881,20 @@
       }
     }
 
+         // SVG presentation controls
+    if (!typing && svgReveal.active && e.shiftKey && (e.key === ">" || e.code === "Period")) {
+      e.preventDefault();
+      toggleSvgPlayback();
+      return;
+    }
+
+    if (!typing && svgReveal.active && e.shiftKey && (e.key === "<" || e.code === "Comma")) {
+      e.preventDefault();
+      configureSvgPlayback();
+      return;
+    }
+
+    // SVG reveal controls
     // SVG reveal controls
     const isRevealKey = e.key === "." || e.key === "," || e.code === "Period" || e.code === "Comma" || e.code === "NumpadDecimal";
     if (!typing && svgReveal.active && isRevealKey) {
@@ -2754,7 +2930,6 @@
         return;
       }
     }
-
     // Delete selection
     if (!typing && (e.key === "Delete" || e.key === "Backspace")) {
       if (state.selectionIndex >= 0) {
@@ -3336,6 +3511,7 @@
   }
 
   function importSvgInkFromText(svgText) {
+     stopSvgPlayback(true);
     const doc = new DOMParser().parseFromString(String(svgText || ""), "image/svg+xml");
     const parsedSvg = doc.querySelector("svg");
     if (!parsedSvg) {
@@ -3643,14 +3819,14 @@ if (tag === "path") {
       showToast("No SVG ink");
       return;
     }
+
     pushUndo();
     clearRedo();
+
     const gid = svgReveal.groupId;
     state.objects = state.objects.filter(o => !(o && o.svgGroupId === gid));
-    svgReveal.active = false;
-    svgReveal.groupId = null;
-    svgReveal.partIds = [];
-    svgReveal.revealed = 0;
+
+    resetSvgRevealState();
     state.selectionIndex = -1;
     redrawAll();
     showToast("SVG cleared");
