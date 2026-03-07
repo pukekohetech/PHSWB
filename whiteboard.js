@@ -214,6 +214,37 @@ printBtn?.addEventListener("click", printCurrentBoard);
     endPauseMs: 5000 // 5 seconds at the end
   };
 
+   // ---- Brush presets ----
+
+const presetConstruction = document.getElementById("presetConstruction");
+const presetOutline = document.getElementById("presetOutline");
+const presetColour = document.getElementById("presetColour");
+
+function applyBrushPreset(size, opacity) {
+  state.size = size;
+  state.opacity = opacity;
+
+  brushSize.value = size;
+  opacityRange.value = opacity;
+
+  brushOut.textContent = size;
+  opacityOut.textContent = Math.round(opacity * 100) + "%";
+
+  updateBrushUI?.();
+}
+
+presetConstruction?.addEventListener("click", () => {
+  applyBrushPreset(5, 0.85);
+});
+
+presetOutline?.addEventListener("click", () => {
+  applyBrushPreset(15, 1);
+});
+
+presetColour?.addEventListener("click", () => {
+  applyBrushPreset(40, 0.25);
+});
+
   function clearSvgPlaybackTimer() {
     if (svgPlayback.timer) {
       clearTimeout(svgPlayback.timer);
