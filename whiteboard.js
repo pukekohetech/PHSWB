@@ -239,8 +239,8 @@ presetConstruction?.addEventListener("click", () => {
 
 presetOutline?.addEventListener("click", () => {
   applyBrushPreset(15, 1);
+  toggleColorPop(false);
 });
-
 presetColour?.addEventListener("click", () => {
   applyBrushPreset(40, 0.25);
 });
@@ -1598,6 +1598,25 @@ function startSvgPlayback() {
     updateSwatch();
     updateScaleOut();
   }
+
+   function updateBrushUI() {
+  if (swatchLive) swatchLive.style.background = state.color;
+}
+   
+// ---- Quick colour palette ----
+document.querySelectorAll(".colorPalette button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const col = btn.dataset.col;
+    if (!col) return;
+
+    state.color = col;
+    colorInput.value = col;
+
+    updateBrushUI?.();
+    redrawAll?.();
+  });
+});
+   
   function setBrushSize(n) {
     state.size = Number(n);
     if (brushSize) brushSize.value = String(state.size);
@@ -3109,6 +3128,9 @@ function startSvgPlayback() {
     state.redo = [];
     applySnapshot(data);
   }
+   const printBtn = document.getElementById("printBtn");
+printBtn?.addEventListener("click", printCurrentBoard);
+   
 async function printCurrentBoard() {
   const doc = buildExportSvgDocument();
   if (!doc) {
