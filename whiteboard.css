@@ -10,6 +10,12 @@
   position: relative;
 }
 
+.presentation .dock,
+.presentation .gearBtn,
+.presentation .panel {
+  display:none;
+}
+
 /* LEFT TOOL DOCK */
 .dock{
   position: sticky;
