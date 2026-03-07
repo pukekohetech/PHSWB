@@ -3517,7 +3517,7 @@
         }
         if (!isFinite(total) || total <= 0) continue;
 
-        const steps = Math.max(60, Math.min(1420, Math.ceil(total / 3)));
+        const steps = Math.max(60, Math.min(2000, Math.ceil(total / 3)));
         const pts = [];
         for (let i = 0; i <= steps; i++) {
           const t = (i / steps) * total;
