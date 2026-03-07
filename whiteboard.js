@@ -482,6 +482,45 @@
     ctx.scale(state.zoom, state.zoom);
   }
 
+   function parseSimpleMLPath(d) {
+  const tokens = String(d || "").match(/[MLml]|-?\d*\.?\d+(?:e[-+]?\d+)?/g);
+  if (!tokens) return null;
+
+  const pts = [];
+  let i = 0;
+  let cmd = null;
+  let x = 0, y = 0;
+
+  while (i < tokens.length) {
+    const t = tokens[i++];
+
+    if (/^[MLml]$/.test(t)) {
+      cmd = t;
+      continue;
+    }
+
+    const nx = parseFloat(t);
+    const ny = parseFloat(tokens[i++]);
+    if (!isFinite(nx) || !isFinite(ny) || !cmd) return null;
+
+    if (cmd === "M") {
+      x = nx; y = ny; cmd = "L";
+    } else if (cmd === "m") {
+      x += nx; y += ny; cmd = "l";
+    } else if (cmd === "L") {
+      x = nx; y = ny;
+    } else if (cmd === "l") {
+      x += nx; y += ny;
+    } else {
+      return null;
+    }
+
+    pts.push({ x, y });
+  }
+
+  return pts.length >= 2 ? pts : null;
+}
+
   // text measuring context
   const measureCtx = document.createElement("canvas").getContext("2d");
   function textMetrics(obj) {
@@ -3378,10 +3417,11 @@
       return o == null ? 1 : Math.max(0, Math.min(1, o));
     }
 
-    function strokeWidthOf(el) {
-      const sw = parseNumberAttr(el.getAttribute("stroke-width"));
-      return Math.max(1, sw ?? 3);
-    }
+   function strokeWidthOf(el) {
+  const attr = parseNumberAttr(el.getAttribute("stroke-width"));
+  const css = parseNumberAttr(getComputedStyle(el).strokeWidth);
+  return Math.max(1, css ?? attr ?? 3);
+}
 
     for (const el of els) {
       if (el.closest("defs") || el.closest("mask")) continue;
@@ -3506,34 +3546,43 @@
         continue;
       }
 
-      if (tag === "path") {
-        if (isNone(stroke)) continue;
-        if (!el.getTotalLength) continue;
-        let total = 0;
-        try {
-          total = el.getTotalLength();
-        } catch {
-          total = 0;
-        }
-        if (!isFinite(total) || total <= 0) continue;
+if (tag === "path") {
+  if (isNone(stroke)) continue;
 
-        const steps = Math.max(60, Math.min(2000, Math.ceil(total / 1.5)));
-        const pts = [];
-        for (let i = 0; i <= steps; i++) {
-          const t = (i / steps) * total;
-          let p = null;
-          try {
-            p = el.getPointAtLength(t);
-          } catch {
-            p = null;
-          }
-          if (!p) continue;
-          pts.push(mapCTM(el, p.x, p.y));
-        }
-        if (pts.length < 2) continue;
-        parts.push({ kind: "stroke", color, opacity, size, points: pts });
-        continue;
-      }
+  const dAttr = el.getAttribute("d") || "";
+  const exactPts = parseSimpleMLPath(dAttr);
+
+  if (exactPts) {
+    parts.push({
+      kind: "stroke",
+      color,
+      opacity,
+      size,
+      points: exactPts.map(p => mapCTM(el, p.x, p.y))
+    });
+    continue;
+  }
+
+  // fallback to sampling only for complex paths
+  if (!el.getTotalLength) continue;
+  let total = 0;
+  try { total = el.getTotalLength(); } catch { total = 0; }
+  if (!isFinite(total) || total <= 0) continue;
+
+  const steps = Math.max(60, Math.min(2000, Math.ceil(total / 1.5)));
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = (i / steps) * total;
+    let p = null;
+    try { p = el.getPointAtLength(t); } catch { p = null; }
+    if (!p) continue;
+    pts.push(mapCTM(el, p.x, p.y));
+  }
+  if (pts.length < 2) continue;
+
+  parts.push({ kind: "stroke", color, opacity, size, points: pts });
+  continue;
+}
 
       if (tag === "text") continue;
     }
