@@ -3879,22 +3879,7 @@ if (tag === "path") {
   continue;
 }
 
-      if (tag === "text") {
-        const x = parseNumberAttr(el.getAttribute("x")) ?? 0;
-        const y = parseNumberAttr(el.getAttribute("y")) ?? 0;
-
-        const p = mapCTM(el, x, y);
-
-        pushPart({
-          kind: "text",
-          text: el.textContent || "",
-          x: p.x,
-          y: p.y,
-          color: fill || stroke
-        });
-
-        continue;
-      }
+      if (tag === "text") continue;
     }
 
     if (!parts.length && !pendingBg) {
