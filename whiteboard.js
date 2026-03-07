@@ -312,22 +312,33 @@
     });
   }
 
-  function startSvgPlayback() {
-    if (!svgReveal.active || !svgReveal.partIds.length) {
-      showToast("Import SVG reveal first");
-      return;
-    }
-
-    stopSvgPlayback(true);
-    setSvgRevealCount(0);
-
-    svgPlayback.running = true;
-    svgPlayback.token += 1;
-    const token = svgPlayback.token;
-
-    showToast(`Presentation ▶ ${(svgPlayback.stepMs / 1000).toFixed(1)}s step`);
-    svgPlaybackTick(token);
+function startSvgPlayback() {
+  if (!svgReveal.active || !svgReveal.partIds.length) {
+    showToast("Import SVG reveal first");
+    return;
   }
+
+  stopSvgPlayback(true);
+
+  const total = svgReveal.partIds.length;
+
+  svgPlayback.running = true;
+  svgPlayback.token += 1;
+  const token = svgPlayback.token;
+
+  // Start from current reveal state instead of resetting to 0.
+  // If nothing is visible yet, start immediately.
+  // If partly revealed, wait one normal step before revealing the next one.
+  // If already fully revealed, let the normal end-pause/restart logic take over.
+  let firstDelay = 0;
+  if (svgReveal.revealed > 0 && svgReveal.revealed < total) {
+    firstDelay = svgPlayback.stepMs;
+  }
+
+  showToast(`Presentation ▶ ${svgReveal.revealed}/${total}`);
+
+  scheduleSvgPlayback(firstDelay, token, () => svgPlaybackTick(token));
+}
 
   function toggleSvgPlayback() {
     if (svgPlayback.running) stopSvgPlayback();
