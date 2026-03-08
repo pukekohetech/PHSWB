@@ -35,6 +35,8 @@
 
   const dockBtns = Array.from(document.querySelectorAll(".dockBtn[data-tool]"));
   const clearBtn = document.getElementById("clearBtn");
+   const undoBtn = document.getElementById("undoBtn");
+const redoBtn = document.getElementById("redoBtn");
 
   const colorBtn = document.getElementById("colorBtn");
   const colorPop = document.getElementById("colorPop");
