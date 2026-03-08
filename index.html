@@ -90,6 +90,14 @@
       <button class="dockBtn" data-tool="text" title="Text (T)">T</button>
       <button class="dockBtn" data-tool="eraser" title="Eraser (E)">🧽</button>
       <button class="dockBtn" data-tool="polyFill" title="Polygon Fill (K)">⬠</button>
+        <button class="dockBtn" id="undoBtn" type="button" title="Undo">↶</button>
+         <button class="dockBtn" id="redoBtn" type="button" title="Redo">↷</button>
+
+        <div class="panel is-hidden" id="settingsPanel" role="dialog" aria-label="Board menu">
+          <div class="panel__top">
+            <div class="panel__title">Board</div>
+            <button class="panel__close" id="settingsCloseBtn" type="button" title="Close">✕</button>
+          </div>
 
       <div class="dockSep"></div>
 
@@ -123,14 +131,7 @@
           aria-expanded="false"
           title="Board menu"
         >⚙️</button>
-        <button class="dockBtn" id="undoBtn" type="button" title="Undo">↶</button>
-         <button class="dockBtn" id="redoBtn" type="button" title="Redo">↷</button>
-
-        <div class="panel is-hidden" id="settingsPanel" role="dialog" aria-label="Board menu">
-          <div class="panel__top">
-            <div class="panel__title">Board</div>
-            <button class="panel__close" id="settingsCloseBtn" type="button" title="Close">✕</button>
-          </div>
+      
 
           <div class="panel__grid">
             <div class="panel__group panel__group--wide">
