@@ -764,6 +764,32 @@ const redoBtn = document.getElementById("redoBtn");
 
   updateBrushUI();
 }
+function applyStyleToSelectionLive(patch = {}) {
+  const idx = state.selectionIndex;
+  if (idx < 0) return false;
+
+  const obj = state.objects[idx];
+  if (!obj) return false;
+
+  if (patch.color != null) {
+    if (obj.kind === "polyFill") {
+      obj.fill = patch.color;
+    } else {
+      obj.color = patch.color;
+      if ((obj.kind === "rect" || obj.kind === "circle") && obj.filled) {
+        obj.fillColor = patch.color;
+      }
+    }
+  }
+
+  if (patch.opacity != null) {
+    obj.opacity = clamp(patch.opacity, 0.05, 1);
+  }
+
+  redrawAll();
+  return true;
+}
+
    
    function applyStyleToSelection(patch = {}) {
   const idx = state.selectionIndex;
