@@ -2094,7 +2094,29 @@ opacityRange?.addEventListener("change", () => {
   }
 });
 
+lineStyleSolid?.addEventListener("click", () => {
+  state.lineStyle = "solid";
+  updateBrushUI();
+  if (state.selectionIndex >= 0) {
+    applyStyleToSelection({ lineStyle: "solid" });
+  }
+});
 
+lineStyleHidden?.addEventListener("click", () => {
+  state.lineStyle = "hidden";
+  updateBrushUI();
+  if (state.selectionIndex >= 0) {
+    applyStyleToSelection({ lineStyle: "hidden" });
+  }
+});
+
+lineStyleCenter?.addEventListener("click", () => {
+  state.lineStyle = "center";
+  updateBrushUI();
+  if (state.selectionIndex >= 0) {
+    applyStyleToSelection({ lineStyle: "center" });
+  }
+});
 
 
    
