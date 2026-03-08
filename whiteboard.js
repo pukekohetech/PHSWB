@@ -764,24 +764,38 @@ const redoBtn = document.getElementById("redoBtn");
 
   updateBrushUI();
 }
-function applyStyleToSelectionLive(patch = {}) {
+function applyStyleToSelection(patch = {}) {
   const idx = state.selectionIndex;
   if (idx < 0) return false;
 
   const obj = state.objects[idx];
   if (!obj) return false;
 
+  state.undo.push(JSON.stringify(snapshot()));
+  state.redo.length = 0;
+
+  // COLOR
   if (patch.color != null) {
-    if (obj.kind === "polyFill") {
-      obj.fill = patch.color;
-    } else {
-      obj.color = patch.color;
-      if ((obj.kind === "rect" || obj.kind === "circle") && obj.filled) {
-        obj.fillColor = patch.color;
-      }
+
+    switch (obj.kind) {
+
+      case "polyFill":
+        obj.fill = patch.color;
+        break;
+
+      case "rect":
+      case "circle":
+        obj.color = patch.color;
+        if (obj.filled) obj.fillColor = patch.color;
+        break;
+
+      default:
+        obj.color = patch.color;
+        break;
     }
   }
 
+  // OPACITY
   if (patch.opacity != null) {
     obj.opacity = clamp(patch.opacity, 0.05, 1);
   }
@@ -789,7 +803,6 @@ function applyStyleToSelectionLive(patch = {}) {
   redrawAll();
   return true;
 }
-
    
    function applyStyleToSelection(patch = {}) {
   const idx = state.selectionIndex;
