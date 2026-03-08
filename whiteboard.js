@@ -111,7 +111,7 @@ const redoBtn = document.getElementById("redoBtn");
     objects: [],
     undo: [],
     redo: [],
-    selectionIndex: -1,
+    selectionIndex: [],
     clipboard: null,
      
     viewW: 0,
