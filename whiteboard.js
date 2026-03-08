@@ -2085,6 +2085,14 @@ opacityRange?.addEventListener("change", () => {
   styleEditSnapshotTaken = false;
 });
 
+   brushSize?.addEventListener("input", e => {
+  const value = clamp(Number(e.target.value || 5), 1, 60);
+  setBrushSize(value);
+
+  if (state.selectionIndex >= 0) {
+    applyStyleToSelectionLive({ size: value });
+  }
+});
 
 
 
