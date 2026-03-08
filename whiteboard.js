@@ -728,7 +728,7 @@ const redoBtn = document.getElementById("redoBtn");
     closeLenBox();
   }
 
-   function syncStyleControlsFromSelection() {
+ function syncStyleControlsFromSelection() {
   const idx = state.selectionIndex;
   if (idx < 0) {
     updateBrushUI();
@@ -742,7 +742,9 @@ const redoBtn = document.getElementById("redoBtn");
   }
 
   let color = state.color;
-  let opacity = state.opacity;
+  let opacity = state.opacity ?? 1;
+  let size = state.size ?? 5;
+  let lineStyle = state.lineStyle || "solid";
 
   if (obj.kind === "polyFill") {
     color = obj.fill || state.color;
@@ -754,16 +756,31 @@ const redoBtn = document.getElementById("redoBtn");
     if ((obj.kind === "rect" || obj.kind === "circle") && obj.filled && obj.fillColor) {
       color = obj.fillColor;
     }
+
+    if ("size" in obj) {
+      size = obj.size ?? size;
+    }
+
+    if (obj.kind === "text") {
+      size = Math.max(1, Math.round((obj.fontSize || 20) / 4));
+    }
+
+    if ("lineStyle" in obj && obj.lineStyle) {
+      lineStyle = obj.lineStyle;
+    }
   }
 
-  if (colorInput) colorInput.value = color;
   state.color = color;
-
-  if (opacityRange) opacityRange.value = String(opacity);
   state.opacity = opacity;
+  state.size = size;
+  state.lineStyle = lineStyle;
+
+  if (colorInput) colorInput.value = color;
+  if (opacityRange) opacityRange.value = String(opacity);
+  if (brushSize) brushSize.value = String(size);
+  if (brushOut) brushOut.textContent = String(size);
 
   updateBrushUI();
-      
 }
    
 function applyStyleToSelection(patch = {}) {
