@@ -255,8 +255,9 @@ function cutSelection() {
   state.redo.length = 0;
 
   state.objects.splice(state.selectionIndex, 1);
-  state.selectionIndex = -1;
-
+ state.selectionIndex = -1;
+state.selection = [];
+   
   redrawAll();
   showToast("Cut");
 }
@@ -1989,7 +1990,8 @@ if (!typing && (e.key === "Delete" || e.key === "Backspace")) {
       .forEach(i => state.objects.splice(i,1));
 
     state.selection = [];
-    state.selectionIndex = -1;
+state.selectionIndex = -1;
+state.selection = [];
 
     redrawAll();
     showToast("Deleted");
@@ -2150,7 +2152,8 @@ if (!typing && (e.key === "Delete" || e.key === "Backspace")) {
     cancelPolyDraft();
     resetSvgRevealState();
     state.objects = [];
-    state.selectionIndex = -1;
+   state.selectionIndex = -1;
+    state.selection = [];
     setActiveTool("pen");
     redrawAll();
   });
