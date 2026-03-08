@@ -1382,36 +1382,39 @@ function onPointerDown(e) {
       return;
     }
 
-    if (state.tool === "select") {
-      const handle = hitHandle(sx, sy);
-      if (handle) {
-        if (beginSelectionTransform(handle.kind, w)) {
-          redrawAll();
-          return;
-        }
-      }
-
-const hit = findHit(w.x, w.y);
-
-if (e.shiftKey && hit >= 0) {
-  // toggle selection
-  const i = state.selection.indexOf(hit);
-  if (i >= 0) state.selection.splice(i, 1);
-  else state.selection.push(hit);
-
-} else {
-  state.selection = hit >= 0 ? [hit] : [];
-}
-
-state.selectionIndex = state.selection.length ? state.selection[state.selection.length - 1] : -1;
-
-syncStyleControlsFromSelection();
-redrawAll();
-
-if (hit >= 0) beginSelectionTransform("move", w);
-else gesture.mode = "select";
-return;
+if (state.tool === "select") {
+  const handle = hitHandle(sx, sy);
+  if (handle) {
+    if (beginSelectionTransform(handle.kind, w)) {
+      redrawAll();
+      return;
     }
+  }
+
+  const hit = findHit(w.x, w.y);
+
+  if (e.shiftKey && hit >= 0) {
+    const i = state.selection.indexOf(hit);
+    if (i >= 0) {
+      state.selection.splice(i, 1);
+    } else {
+      state.selection.push(hit);
+    }
+  } else {
+    state.selection = hit >= 0 ? [hit] : [];
+  }
+
+  state.selectionIndex = state.selection.length
+    ? state.selection[state.selection.length - 1]
+    : -1;
+
+  syncStyleControlsFromSelection();
+  redrawAll();
+
+  if (hit >= 0) beginSelectionTransform("move", w);
+  else gesture.mode = "select";
+  return;
+}
 
     if (state.tool === "bgMove" || state.tool === "bgScale" || state.tool === "bgRotate") {
       beginToolTransformForSelectionOrBg(state.tool, w);
