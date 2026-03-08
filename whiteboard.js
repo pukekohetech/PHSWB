@@ -1384,7 +1384,7 @@ function onPointerDown(e) {
 
 if (state.tool === "select") {
   const handle = hitHandle(sx, sy);
-  if (handle) {
+  if (handle && !e.shiftKey) {
     if (beginSelectionTransform(handle.kind, w)) {
       redrawAll();
       return;
@@ -1393,12 +1393,11 @@ if (state.tool === "select") {
 
   const hit = findHit(w.x, w.y);
 
-  if (e.shiftKey && hit >= 0) {
-    const i = state.selection.indexOf(hit);
-    if (i >= 0) {
-      state.selection.splice(i, 1);
-    } else {
-      state.selection.push(hit);
+  if (e.shiftKey) {
+    if (hit >= 0) {
+      const i = state.selection.indexOf(hit);
+      if (i >= 0) state.selection.splice(i, 1);
+      else state.selection.push(hit);
     }
   } else {
     state.selection = hit >= 0 ? [hit] : [];
@@ -1411,8 +1410,10 @@ if (state.tool === "select") {
   syncStyleControlsFromSelection();
   redrawAll();
 
-  if (hit >= 0) beginSelectionTransform("move", w);
+  // only start move when NOT shift-clicking
+  if (!e.shiftKey && hit >= 0) beginSelectionTransform("move", w);
   else gesture.mode = "select";
+
   return;
 }
 
