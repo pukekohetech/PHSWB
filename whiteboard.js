@@ -763,8 +763,7 @@ const redoBtn = document.getElementById("redoBtn");
   state.opacity = opacity;
 
   updateBrushUI();
-}
-function applyStyleToSelection(patch = {}) {
+}function applyStyleToSelection(patch = {}) {
   const idx = state.selectionIndex;
   if (idx < 0) return false;
 
@@ -774,11 +773,18 @@ function applyStyleToSelection(patch = {}) {
   state.undo.push(JSON.stringify(snapshot()));
   state.redo.length = 0;
 
-  // COLOR
+  return applyStyleToSelectionLive(patch);
+}
+
+function applyStyleToSelectionLive(patch = {}) {
+  const idx = state.selectionIndex;
+  if (idx < 0) return false;
+
+  const obj = state.objects[idx];
+  if (!obj) return false;
+
   if (patch.color != null) {
-
     switch (obj.kind) {
-
       case "polyFill":
         obj.fill = patch.color;
         break;
@@ -792,37 +798,6 @@ function applyStyleToSelection(patch = {}) {
       default:
         obj.color = patch.color;
         break;
-    }
-  }
-
-  // OPACITY
-  if (patch.opacity != null) {
-    obj.opacity = clamp(patch.opacity, 0.05, 1);
-  }
-
-  redrawAll();
-  return true;
-}
-   
-   function applyStyleToSelection(patch = {}) {
-  const idx = state.selectionIndex;
-  if (idx < 0) return false;
-
-  const obj = state.objects[idx];
-  if (!obj) return false;
-
-  state.undo.push(JSON.stringify(snapshot()));
-  state.redo.length = 0;
-
-  if (patch.color != null) {
-    if (obj.kind === "polyFill") {
-      obj.fill = patch.color;
-    } else {
-      obj.color = patch.color;
-
-      if ((obj.kind === "rect" || obj.kind === "circle") && obj.filled) {
-        obj.fillColor = patch.color;
-      }
     }
   }
 
@@ -2039,17 +2014,8 @@ colorInput?.addEventListener("input", e => {
   setColor(value);
 
   if (state.selectionIndex >= 0) {
-    if (!selectionStyleDrag.colorStarted) {
-      state.undo.push(JSON.stringify(snapshot()));
-      state.redo.length = 0;
-      selectionStyleDrag.colorStarted = true;
-    }
     applyStyleToSelectionLive({ color: value });
   }
-});
-
-colorInput?.addEventListener("change", () => {
-  selectionStyleDrag.colorStarted = false;
 });
 
 opacityRange?.addEventListener("input", e => {
@@ -2058,18 +2024,15 @@ opacityRange?.addEventListener("input", e => {
   updateBrushUI();
 
   if (state.selectionIndex >= 0) {
-    if (!selectionStyleDrag.opacityStarted) {
-      state.undo.push(JSON.stringify(snapshot()));
-      state.redo.length = 0;
-      selectionStyleDrag.opacityStarted = true;
-    }
     applyStyleToSelectionLive({ opacity: value });
   }
 });
 
-opacityRange?.addEventListener("change", () => {
-  selectionStyleDrag.opacityStarted = false;
-});
+
+
+
+
+
    
   applyTitleBtn?.addEventListener("click", () => {
     state.undo.push(JSON.stringify(snapshot()));
