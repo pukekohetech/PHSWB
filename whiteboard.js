@@ -763,7 +763,10 @@ const redoBtn = document.getElementById("redoBtn");
   state.opacity = opacity;
 
   updateBrushUI();
-}function applyStyleToSelection(patch = {}) {
+      
+}
+   
+   function applyStyleToSelection(patch = {}) {
   const idx = state.selectionIndex;
   if (idx < 0) return false;
 
@@ -968,10 +971,7 @@ function applyStyleToSelectionLive(patch = {}) {
   /* =========================
      Selection transforms
   ========================= */
-let selectionStyleDrag = {
-  colorStarted: false,
-  opacityStarted: false
-};
+
    
   function beginSelectionTransform(kind, w) {
     const idx = state.selectionIndex;
@@ -2009,13 +2009,24 @@ return;
     setActiveTool("pen");
     redrawAll();
   });
+   let styleEditSnapshotTaken = false;
+   
 colorInput?.addEventListener("input", e => {
   const value = e.target.value;
   setColor(value);
 
   if (state.selectionIndex >= 0) {
+    if (!styleEditSnapshotTaken) {
+      state.undo.push(JSON.stringify(snapshot()));
+      state.redo.length = 0;
+      styleEditSnapshotTaken = true;
+    }
     applyStyleToSelectionLive({ color: value });
   }
+});
+
+colorInput?.addEventListener("change", () => {
+  styleEditSnapshotTaken = false;
 });
 
 opacityRange?.addEventListener("input", e => {
@@ -2024,10 +2035,18 @@ opacityRange?.addEventListener("input", e => {
   updateBrushUI();
 
   if (state.selectionIndex >= 0) {
+    if (!styleEditSnapshotTaken) {
+      state.undo.push(JSON.stringify(snapshot()));
+      state.redo.length = 0;
+      styleEditSnapshotTaken = true;
+    }
     applyStyleToSelectionLive({ opacity: value });
   }
 });
 
+opacityRange?.addEventListener("change", () => {
+  styleEditSnapshotTaken = false;
+});
 
 
 
