@@ -990,8 +990,10 @@ function commitPolyFill() {
   }
 
   // keep fills visually underneath outlines
-  state.objects.unshift(obj);
+  //state.objects.unshift(obj);
+state.objects.push(obj);
 
+   
   cancelPolyDraft();
   redrawAll();
   showToast("Poly filled");
