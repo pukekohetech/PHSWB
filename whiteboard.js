@@ -728,6 +728,73 @@ const redoBtn = document.getElementById("redoBtn");
     closeLenBox();
   }
 
+   function syncStyleControlsFromSelection() {
+  const idx = state.selectionIndex;
+  if (idx < 0) {
+    updateBrushUI();
+    return;
+  }
+
+  const obj = state.objects[idx];
+  if (!obj) {
+    updateBrushUI();
+    return;
+  }
+
+  let color = state.color;
+  let opacity = state.opacity;
+
+  if (obj.kind === "polyFill") {
+    color = obj.fill || state.color;
+    opacity = obj.opacity ?? 1;
+  } else {
+    color = obj.color || state.color;
+    opacity = obj.opacity ?? 1;
+
+    if ((obj.kind === "rect" || obj.kind === "circle") && obj.filled && obj.fillColor) {
+      color = obj.fillColor;
+    }
+  }
+
+  if (colorInput) colorInput.value = color;
+  state.color = color;
+
+  if (opacityRange) opacityRange.value = String(opacity);
+  state.opacity = opacity;
+
+  updateBrushUI();
+}
+   
+   function applyStyleToSelection(patch = {}) {
+  const idx = state.selectionIndex;
+  if (idx < 0) return false;
+
+  const obj = state.objects[idx];
+  if (!obj) return false;
+
+  state.undo.push(JSON.stringify(snapshot()));
+  state.redo.length = 0;
+
+  if (patch.color != null) {
+    if (obj.kind === "polyFill") {
+      obj.fill = patch.color;
+    } else {
+      obj.color = patch.color;
+
+      if ((obj.kind === "rect" || obj.kind === "circle") && obj.filled) {
+        obj.fillColor = patch.color;
+      }
+    }
+  }
+
+  if (patch.opacity != null) {
+    obj.opacity = clamp(patch.opacity, 0.05, 1);
+  }
+
+  redrawAll();
+  return true;
+}
+
   /* =========================
      SVG playback
   ========================= */
@@ -1198,13 +1265,14 @@ function onPointerDown(e) {
         }
       }
 
-      const hit = findHit(w.x, w.y);
-      state.selectionIndex = hit;
-      redrawAll();
+const hit = findHit(w.x, w.y);
+state.selectionIndex = hit;
+syncStyleControlsFromSelection();
+redrawAll();
 
-      if (hit >= 0) beginSelectionTransform("move", w);
-      else gesture.mode = "select";
-      return;
+if (hit >= 0) beginSelectionTransform("move", w);
+else gesture.mode = "select";
+return;
     }
 
     if (state.tool === "bgMove" || state.tool === "bgScale" || state.tool === "bgRotate") {
@@ -1919,7 +1987,25 @@ function onPointerDown(e) {
     setActiveTool("pen");
     redrawAll();
   });
+colorInput?.addEventListener("input", e => {
+  const value = e.target.value;
+  setColor(value);
 
+  if (state.selectionIndex >= 0) {
+    applyStyleToSelection({ color: value });
+  }
+});
+
+opacityRange?.addEventListener("input", e => {
+  const value = parseFloat(e.target.value || "1");
+  state.opacity = clamp(value, 0.05, 1);
+  updateBrushUI();
+
+  if (state.selectionIndex >= 0) {
+    applyStyleToSelection({ opacity: value });
+  }
+});
+   
   applyTitleBtn?.addEventListener("click", () => {
     state.undo.push(JSON.stringify(snapshot()));
     state.redo.length = 0;
