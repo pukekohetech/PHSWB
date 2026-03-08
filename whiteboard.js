@@ -954,6 +954,11 @@ const redoBtn = document.getElementById("redoBtn");
   /* =========================
      Selection transforms
   ========================= */
+let selectionStyleDrag = {
+  colorStarted: false,
+  opacityStarted: false
+};
+   
   function beginSelectionTransform(kind, w) {
     const idx = state.selectionIndex;
     if (idx < 0) return false;
@@ -1995,8 +2000,17 @@ colorInput?.addEventListener("input", e => {
   setColor(value);
 
   if (state.selectionIndex >= 0) {
-    applyStyleToSelection({ color: value });
+    if (!selectionStyleDrag.colorStarted) {
+      state.undo.push(JSON.stringify(snapshot()));
+      state.redo.length = 0;
+      selectionStyleDrag.colorStarted = true;
+    }
+    applyStyleToSelectionLive({ color: value });
   }
+});
+
+colorInput?.addEventListener("change", () => {
+  selectionStyleDrag.colorStarted = false;
 });
 
 opacityRange?.addEventListener("input", e => {
@@ -2005,8 +2019,17 @@ opacityRange?.addEventListener("input", e => {
   updateBrushUI();
 
   if (state.selectionIndex >= 0) {
-    applyStyleToSelection({ opacity: value });
+    if (!selectionStyleDrag.opacityStarted) {
+      state.undo.push(JSON.stringify(snapshot()));
+      state.redo.length = 0;
+      selectionStyleDrag.opacityStarted = true;
+    }
+    applyStyleToSelectionLive({ opacity: value });
   }
+});
+
+opacityRange?.addEventListener("change", () => {
+  selectionStyleDrag.opacityStarted = false;
 });
    
   applyTitleBtn?.addEventListener("click", () => {
