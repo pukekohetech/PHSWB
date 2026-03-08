@@ -1013,6 +1013,8 @@ const exportObjects = [
       });
 
       clearBgBtn?.addEventListener("click", clearBackground);
+      undoBtn?.addEventListener("click", performUndo);
+redoBtn?.addEventListener("click", performRedo); 
 
       document.addEventListener("paste", e => {
         try {
