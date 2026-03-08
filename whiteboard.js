@@ -194,46 +194,53 @@ clipboard: null,
     return JSON.parse(JSON.stringify(obj));
   }
 
-   function copySelection() {
-  if (state.selectionIndex < 0) return;
+function copySelection() {
+  if (!state.selection || !state.selection.length) return;
 
-  const obj = state.objects[state.selectionIndex];
-  if (!obj) return;
+  state.clipboard = state.selection
+    .map(i => state.objects[i])
+    .filter(o => !!o)
+    .map(o => deepClone(o));
 
-  state.clipboard = deepClone(obj);
-  showToast("Copied");
+  showToast(`Copied ${state.clipboard.length}`);
 }
 
 function pasteClipboard() {
   if (!state.clipboard) return;
 
-  const obj = deepClone(state.clipboard);
-
-  // offset so pasted objects appear slightly shifted
-  if ("x1" in obj) {
-    obj.x1 += 20;
-    obj.y1 += 20;
-  }
-  if ("x2" in obj) {
-    obj.x2 += 20;
-    obj.y2 += 20;
-  }
-  if ("x" in obj) {
-    obj.x += 20;
-    obj.y += 20;
-  }
-  if ("cx" in obj) {
-    obj.cx += 20;
-    obj.cy += 20;
-  }
-
-  ensureObjId(obj);
-
   state.undo.push(JSON.stringify(snapshot()));
   state.redo.length = 0;
 
-  state.objects.push(obj);
-  state.selectionIndex = state.objects.length - 1;
+  const newSelection = [];
+
+  for (const src of state.clipboard) {
+    const obj = deepClone(src);
+
+    if ("x1" in obj) {
+      obj.x1 += 20;
+      obj.y1 += 20;
+    }
+    if ("x2" in obj) {
+      obj.x2 += 20;
+      obj.y2 += 20;
+    }
+    if ("x" in obj) {
+      obj.x += 20;
+      obj.y += 20;
+    }
+    if ("cx" in obj) {
+      obj.cx += 20;
+      obj.cy += 20;
+    }
+
+    ensureObjId(obj);
+
+    state.objects.push(obj);
+    newSelection.push(state.objects.length - 1);
+  }
+
+  state.selection = newSelection;
+  state.selectionIndex = newSelection[newSelection.length - 1];
 
   redrawAll();
   showToast("Pasted");
@@ -1970,17 +1977,26 @@ return;
       }
     }
 
-    if (!typing && (e.key === "Delete" || e.key === "Backspace")) {
-      if (state.selectionIndex >= 0) {
-        state.undo.push(JSON.stringify(snapshot()));
-        state.redo.length = 0;
-        state.objects.splice(state.selectionIndex, 1);
-        state.selectionIndex = -1;
-        redrawAll();
-        showToast("Deleted");
-        return;
-      }
-    }
+if (!typing && (e.key === "Delete" || e.key === "Backspace")) {
+
+  if (state.selection && state.selection.length) {
+
+    state.undo.push(JSON.stringify(snapshot()));
+    state.redo.length = 0;
+
+    state.selection
+      .sort((a,b)=>b-a)
+      .forEach(i => state.objects.splice(i,1));
+
+    state.selection = [];
+    state.selectionIndex = -1;
+
+    redrawAll();
+    showToast("Deleted");
+    return;
+  }
+
+}
 
     if (!typing) {
       const k = e.key.toLowerCase();
