@@ -1403,20 +1403,20 @@ if (state.tool === "select") {
     state.selection = hit >= 0 ? [hit] : [];
   }
 
-state.selectionIndex = state.selection.length
-  ? state.selection[state.selection.length - 1]
-  : -1;
+  state.selectionIndex = state.selection.length
+    ? state.selection[state.selection.length - 1]
+    : -1;
 
-syncStyleControlsFromSelection();
-redrawAll();
+  syncStyleControlsFromSelection();
+  redrawAll();
 
-if (!e.shiftKey && hit >= 0) {
-  beginSelectionTransform("move", w);
-} else {
-  gesture.mode = "select";
-}
+  if (!e.shiftKey && hit >= 0) {
+    beginSelectionTransform("move", w);
+  } else {
+    gesture.mode = "select";
+  }
 
-return;
+  return;
 }
 
     if (state.tool === "bgMove" || state.tool === "bgScale" || state.tool === "bgRotate") {
