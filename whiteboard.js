@@ -1872,9 +1872,11 @@ return;
         e.preventDefault();
         hardResetGesture();
         cancelPolyDraft();
-        if (state.undo.length) {
-          state.redo.push(JSON.stringify(snapshot()));
-          applySnapshot(JSON.parse(state.undo.pop()));
+     if (state.undo.length) {
+  state.redo.push(JSON.stringify(snapshot()));
+  applySnapshot(JSON.parse(state.undo.pop()));
+  syncStyleControlsFromSelection();
+
         }
         return;
       }
@@ -1882,10 +1884,11 @@ return;
         e.preventDefault();
         hardResetGesture();
         cancelPolyDraft();
-        if (state.redo.length) {
-          state.undo.push(JSON.stringify(snapshot()));
-          applySnapshot(JSON.parse(state.redo.pop()));
-        }
+      if (state.redo.length) {
+  state.undo.push(JSON.stringify(snapshot()));
+  applySnapshot(JSON.parse(state.redo.pop()));
+  syncStyleControlsFromSelection();
+}
         return;
       }
     }
