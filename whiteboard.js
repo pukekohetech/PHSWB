@@ -112,7 +112,8 @@ const redoBtn = document.getElementById("redoBtn");
     undo: [],
     redo: [],
     selectionIndex: -1,
-
+    clipboard: null,
+     
     viewW: 0,
     viewH: 0
   };
@@ -191,6 +192,66 @@ const redoBtn = document.getElementById("redoBtn");
   function deepClone(obj) {
     return JSON.parse(JSON.stringify(obj));
   }
+
+   function copySelection() {
+  if (state.selectionIndex < 0) return;
+
+  const obj = state.objects[state.selectionIndex];
+  if (!obj) return;
+
+  state.clipboard = deepClone(obj);
+  showToast("Copied");
+}
+
+function pasteClipboard() {
+  if (!state.clipboard) return;
+
+  const obj = deepClone(state.clipboard);
+
+  // offset so pasted objects appear slightly shifted
+  if ("x1" in obj) {
+    obj.x1 += 20;
+    obj.y1 += 20;
+  }
+  if ("x2" in obj) {
+    obj.x2 += 20;
+    obj.y2 += 20;
+  }
+  if ("x" in obj) {
+    obj.x += 20;
+    obj.y += 20;
+  }
+  if ("cx" in obj) {
+    obj.cx += 20;
+    obj.cy += 20;
+  }
+
+  ensureObjId(obj);
+
+  state.undo.push(JSON.stringify(snapshot()));
+  state.redo.length = 0;
+
+  state.objects.push(obj);
+  state.selectionIndex = state.objects.length - 1;
+
+  redrawAll();
+  showToast("Pasted");
+}
+
+function cutSelection() {
+  if (state.selectionIndex < 0) return;
+
+  copySelection();
+
+  state.undo.push(JSON.stringify(snapshot()));
+  state.redo.length = 0;
+
+  state.objects.splice(state.selectionIndex, 1);
+  state.selectionIndex = -1;
+
+  redrawAll();
+  showToast("Cut");
+}
 
   function pxPerMm() {
     const v = Number(state.pxPerMm);
@@ -1924,6 +1985,24 @@ return;
 
     if (mod) {
       const key = e.key.toLowerCase();
+
+         if (key === "c") {
+    e.preventDefault();
+    copySelection();
+    return;
+  }
+
+  if (key === "v") {
+    e.preventDefault();
+    pasteClipboard();
+    return;
+  }
+
+  if (key === "x") {
+    e.preventDefault();
+    cutSelection();
+    return;
+  }
       if (key === "z" && !e.shiftKey) {
         e.preventDefault();
         hardResetGesture();
