@@ -1993,7 +1993,7 @@ if (!typing && (e.key === "Delete" || e.key === "Backspace")) {
       .sort((a,b)=>b-a)
       .forEach(i => state.objects.splice(i,1));
 
-    state.selection = [];
+ 
 state.selectionIndex = -1;
 state.selection = [];
 
