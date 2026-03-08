@@ -766,7 +766,7 @@ const redoBtn = document.getElementById("redoBtn");
       
 }
    
-   function applyStyleToSelection(patch = {}) {
+function applyStyleToSelection(patch = {}) {
   const idx = state.selectionIndex;
   if (idx < 0) return false;
 
@@ -806,6 +806,26 @@ function applyStyleToSelectionLive(patch = {}) {
 
   if (patch.opacity != null) {
     obj.opacity = clamp(patch.opacity, 0.05, 1);
+  }
+
+  if (patch.size != null) {
+    if ("size" in obj) {
+      obj.size = clamp(Number(patch.size), 1, 60);
+    } else if (obj.kind === "text") {
+      obj.fontSize = Math.max(14, Math.round(Number(patch.size) * 4));
+    }
+  }
+
+  if (patch.lineStyle != null) {
+    if (
+      obj.kind === "line" ||
+      obj.kind === "arrow" ||
+      obj.kind === "arc" ||
+      obj.kind === "rect" ||
+      obj.kind === "circle"
+    ) {
+      obj.lineStyle = patch.lineStyle;
+    }
   }
 
   redrawAll();
