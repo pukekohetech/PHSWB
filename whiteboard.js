@@ -1842,12 +1842,12 @@ if (state.tool === "select") {
       if (wasPlaying) showToast("Presentation stopped");
       return;
     }
-
-    if (e.code === "Space") {
-      spacePanning = true;
-      e.preventDefault();
-      return;
-    }
+     
+if (!typing && e.code === "Space") {
+  spacePanning = true;
+  e.preventDefault();
+  return;
+}
 
     if (!typing && (e.key === "f" || e.key === "F")) {
       const idx = state.selectionIndex;
@@ -2137,12 +2137,16 @@ state.selection = [];
     }
   });
 
-  document.addEventListener("keyup", e => {
-    if (e.code === "Space") {
-      spacePanning = false;
-      if (!gesture.active) updateCursorFromTool();
-    }
-  });
+document.addEventListener("keyup", e => {
+  const activeEl = document.activeElement;
+  const tag = (activeEl && activeEl.tagName) || "";
+  const typing = (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") && activeEl !== lenInput;
+
+  if (!typing && e.code === "Space") {
+    spacePanning = false;
+    if (!gesture.active) updateCursorFromTool();
+  }
+});
 
   /* =========================
      Canvas events
