@@ -198,7 +198,7 @@ function getLineDash(style, size = 1) {
     return [s * 8, s * 3, s * 1.2, s * 3];
 
   if (style === "reference")
-    return [s * 10, s * 3, s * 3]; // long dash dash
+    return [s * 10, s * 3, s * 3, s * 3, s * 3, s * 3]; // long dash dash    [s * 10, s * 3, s * 3]
 
   return [];
 }
