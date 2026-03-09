@@ -102,7 +102,7 @@ const redoBtn = document.getElementById("redoBtn");
   const SNAP_RADIUS_PX = 12;
 
   const state = {
-    tool: "line",
+    tool: "pen",
     color: "#111111",
     opacity: 1,
     size: 5,
