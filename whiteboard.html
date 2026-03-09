@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PHS Whiteboard</title>
+
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="whiteboard.css" />
+</head>
+
+<body class="page-whiteboard">
+  <nav class="appNav" aria-label="PHS Classroom Tools">
+    <a class="appNav__btn" href="index.html" data-nav="index">⏲ Smart Board</a>
+    <a class="appNav__btn" href="whiteboard.html" data-nav="whiteboard">🧑‍🏫 Whiteboard</a>
+    <a class="appNav__btn" href="wheel.html" data-nav="wheel">🎡 Wheel</a>
+    <a class="appNav__btn" href="timer.html" data-nav="timer">⏱ Quick Timer</a>
+    <a class="appNav__btn" href="noise.html" data-nav="noise">🔊 Noise</a>
+    <a class="appNav__btn" href="brainbreak.html" data-nav="brain">🧠 Brain Breaks</a>
+  </nav>
+
+
+
+  <div class="toast" id="toast" aria-live="polite">Saved</div>
+
+  <main class="wb">
+    <aside class="dock" aria-label="Tools">
+      <div class="dockPopWrap">
+        <button class="dockBtn dockBtn--swatch" id="colorBtn" type="button" title="Colour + Brush size">
+          <span class="swatchLive" id="swatchLive" aria-hidden="true"></span>
+        </button>
+
+        <div class="dockPop is-hidden" id="colorPop" role="dialog" aria-label="Colour and brush size">
+          <div class="dockPop__row">
+            <label class="dockPop__label" for="colorInput">Colour</label>
+            <input id="colorInput" type="color" value="#111111" class="dockPop__color" />
+          </div>
+
+          <div class="dockPop__row">
+            <label class="dockPop__label" for="brushSize">Brush size</label>
+            <input id="brushSize" type="range" min="1" max="60" value="5" class="dockPop__range" />
+            <span id="brushOut" class="dockPop__pill">5</span>
+          </div>
+
+          <div class="dockPop__row">
+            <label class="dockPop__label" for="opacityRange">Opacity</label>
+            <input id="opacityRange" type="range" min="0.05" max="1" step="0.01" value="1" class="dockPop__range" />
+            <span id="opacityOut" class="dockPop__pill">100%</span>
+          </div>
+
+          <div class="dockPop__section">
+            <div class="dockPop__subhead">Presets</div>
+            <div class="presetRow presetRow--triple">
+              <button type="button" class="panel__btn" id="presetConstruction">Construction</button>
+              <button type="button" class="panel__btn" id="presetOutline">Outline</button>
+              <button type="button" class="panel__btn" id="presetColour">Fill</button>
+            </div>
+            <div class="presetRow presetRow--triple">
+              <button type="button" class="panel__btn" id="presetReference">Reference</button>
+              <button type="button" class="panel__btn" id="presetHidden">Hidden</button>
+              <button type="button" class="panel__btn" id="presetCenter">Center</button>
+            </div>
+            <div class="dockPop__note">Construction + Outline use black automatically.</div>
+            <div class="dockPop__note">Reference, Hidden, and Center use the line options below.</div>
+          </div>
+
+          <div class="dockPop__section">
+            <div class="dockPop__subhead">Line style</div>
+            <div class="presetRow lineStyleRow lineStyleRow--four">
+              <button type="button" class="panel__btn panel__btn--lineStyle" id="lineStyleSolid" title="Solid line" aria-label="Solid line">
+                <span class="lineIcon lineIcon--solid" aria-hidden="true"></span>
+              </button>
+              <button type="button" class="panel__btn panel__btn--lineStyle" id="lineStyleReference" title="Reference line" aria-label="Reference line">
+                <span class="lineIcon lineIcon--reference" aria-hidden="true"></span>
+              </button>
+              <button type="button" class="panel__btn panel__btn--lineStyle" id="lineStyleHidden" title="Hidden line" aria-label="Hidden line">
+                <span class="lineIcon lineIcon--hidden" aria-hidden="true"></span>
+              </button>
+              <button type="button" class="panel__btn panel__btn--lineStyle" id="lineStyleCenter" title="Center line" aria-label="Center line">
+                <span class="lineIcon lineIcon--center" aria-hidden="true"></span>
+              </button>
+            </div>
+            <div class="dockPop__note">Solid • Reference • Hidden • Center. Snapping still uses the true line/curve geometry.</div>
+            <div class="dockPop__note">Right-click: finish PolyFill • reset Arc</div>
+          </div>
+
+          <div class="dockPop__section">
+            <div class="dockPop__subhead">Quick colours</div>
+            <div class="colorPalette" aria-label="Quick colours">
+              <button type="button" data-col="#111111" title="Black" style="background:#111111;"></button>
+              <button type="button" data-col="#ffffff" title="White" style="background:#ffffff; border:1px solid rgba(0,0,0,.2);"></button>
+              <button type="button" data-col="#d32f2f" title="Red" style="background:#d32f2f;"></button>
+              <button type="button" data-col="#f57c00" title="Orange" style="background:#f57c00;"></button>
+              <button type="button" data-col="#fbc02d" title="Yellow" style="background:#fbc02d;"></button>
+              <button type="button" data-col="#388e3c" title="Green" style="background:#388e3c;"></button>
+              <button type="button" data-col="#1976d2" title="Blue" style="background:#1976d2;"></button>
+              <button type="button" data-col="#7b1fa2" title="Purple" style="background:#7b1fa2;"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dockSep"></div>
+
+      <button class="dockBtn" data-tool="select" type="button" title="Select / Move (V)">🖱️</button>
+
+      <div class="dockSep"></div>
+
+      <button class="dockBtn is-active" data-tool="pen" type="button" title="Freehand (P)">✏️</button>
+      <button class="dockBtn" data-tool="line" type="button" title="Line (L)">／</button>
+      <button class="dockBtn" data-tool="rect" type="button" title="Rectangle (R)">▭</button>
+      <button class="dockBtn" data-tool="circle" type="button" title="Circle (C)">◯</button>
+      <button class="dockBtn" data-tool="arc" type="button" title="Arc (G)">⌒</button>
+      <button class="dockBtn" data-tool="arrow" type="button" title="Arrow (A)">➤</button>
+      <button class="dockBtn" data-tool="text" type="button" title="Text (T)">T</button>
+      <button class="dockBtn" data-tool="eraser" type="button" title="Eraser (E)">🧽</button>
+      <button class="dockBtn" data-tool="polyFill" type="button" title="Polygon Fill (K)">⬠</button>
+
+      <button class="dockBtn" id="undoBtn" type="button" title="Undo">↶</button>
+      <button class="dockBtn" id="redoBtn" type="button" title="Redo">↷</button>
+
+      <div class="dockSep"></div>
+
+      <button class="dockBtn" data-tool="bgMove" type="button" title="Move selection / background">↔</button>
+      <button class="dockBtn" data-tool="bgScale" type="button" title="Scale selection / background">⤡</button>
+      <button class="dockBtn" data-tool="bgRotate" type="button" title="Rotate selection / background">⟲</button>
+
+      <div class="dockSep"></div>
+
+      <button class="dockBtn" id="setScaleBtn" type="button" title="Set scale from selected line">📏</button>
+
+      <div class="dockSep"></div>
+
+      <button class="dockBtn dockBtn--danger" id="clearBtn" type="button" title="Clear ink (returns to Pen)">🗑</button>
+    </aside>
+
+    <section class="stageWrap">
+      <div class="stage" id="stage" aria-label="Whiteboard stage">
+        <div id="bgLayer" aria-hidden="true">
+          <img id="bgImg" alt="" draggable="false" />
+        </div>
+
+        <canvas id="inkCanvas"></canvas>
+        <canvas id="uiCanvas"></canvas>
+
+        <button
+          class="gearBtn"
+          id="settingsBtn"
+          type="button"
+          aria-haspopup="true"
+          aria-expanded="false"
+          title="Board menu"
+        >⚙️</button>
+
+        <div class="panel is-hidden" id="settingsPanel" role="dialog" aria-label="Board menu">
+          <div class="panel__top">
+            <div class="panel__title">Board</div>
+            <button class="panel__close" id="settingsCloseBtn" type="button" title="Close">✕</button>
+          </div>
+
+          <div class="panel__grid">
+            <div class="panel__group panel__group--wide">
+              <label class="panel__label" for="titleInput">Title</label>
+              <div class="panel__row">
+                <input id="titleInput" class="panel__input" type="text" placeholder="Add a heading…" />
+                <button id="applyTitleBtn" class="panel__btn" type="button">Apply</button>
+              </div>
+            </div>
+
+            <div class="panel__group panel__group--wide">
+              <label class="panel__label" for="bgFile">Background</label>
+              <div class="panel__row panel__row--wrap">
+                <input id="bgFile" type="file" accept="image/*" class="panel__file" />
+                <button id="clearBgBtn" class="panel__btn" type="button">Clear</button>
+              </div>
+              <div class="panel__note">Use ↔ ⤡ ⟲ on the left to move, scale, or rotate it.</div>
+            </div>
+
+            <div class="panel__group panel__group--wide">
+              <label class="panel__label" for="svgInkFile">Presentation</label>
+              <div class="panel__row panel__row--wrap">
+                <input id="svgInkFile" type="file" accept="image/svg+xml,.svg" class="panel__file" />
+                <button id="clearSvgInkBtn" class="panel__btn" type="button">Clear</button>
+              </div>
+              <div class="panel__note">. next • , back • Shift + &gt; play • Shift + &lt; timing</div>
+            </div>
+
+            <div class="panel__group panel__group--wide">
+              <label class="panel__label">Boards</label>
+              <div class="panel__row panel__row--wrap">
+                <select id="boardSelect" class="panel__select"></select>
+                <button id="newBoardBtn" class="panel__btn" type="button">New</button>
+                <button id="saveBoardBtn" class="panel__btn" type="button">Save</button>
+                <button id="loadBoardBtn" class="panel__btn" type="button">Load</button>
+              </div>
+              <div class="panel__row panel__row--wrap">
+                <button id="deleteBoardBtn" class="panel__btn panel__btn--danger" type="button">Delete</button>
+                <button id="deleteAllBoardsBtn" class="panel__btn panel__btn--danger" type="button">Delete all</button>
+              </div>
+            </div>
+
+            <div class="panel__group panel__group--wide">
+              <label class="panel__label">Export</label>
+              <div class="panel__row panel__row--wrap">
+                <button id="exportBtn" class="panel__btn panel__btn--primary" type="button">PNG</button>
+                <button id="exportSvgBtn" class="panel__btn panel__btn--primary" type="button">SVG</button>
+                <button id="printBtn" class="panel__btn panel__btn--primary" type="button">Print</button>
+              </div>
+            </div>
+
+            <div class="panel__group panel__group--wide">
+              <label class="panel__label">Line options</label>
+              <div class="linePresetGrid">
+                <div class="linePresetCard">
+                  <div class="linePresetCard__top">
+                    <span class="linePresetCard__title">Reference</span>
+                    <span class="lineIcon lineIcon--reference" aria-hidden="true"></span>
+                  </div>
+                  <div class="panel__row panel__row--wrap">
+                    <input id="refColorInput" class="panel__input panel__input--color" type="color" value="#1b5e20" />
+                    <input id="refSizeInput" class="panel__input panel__input--number" type="number" min="1" max="60" step="1" value="10" />
+                    <span class="panel__note">px</span>
+                  </div>
+                </div>
+                <div class="linePresetCard">
+                  <div class="linePresetCard__top">
+                    <span class="linePresetCard__title">Hidden</span>
+                    <span class="lineIcon lineIcon--hidden" aria-hidden="true"></span>
+                  </div>
+                  <div class="panel__row panel__row--wrap">
+                    <input id="hiddenColorInput" class="panel__input panel__input--color" type="color" value="#1976d2" />
+                    <input id="hiddenSizeInput" class="panel__input panel__input--number" type="number" min="1" max="60" step="1" value="10" />
+                    <span class="panel__note">px</span>
+                  </div>
+                </div>
+                <div class="linePresetCard">
+                  <div class="linePresetCard__top">
+                    <span class="linePresetCard__title">Center</span>
+                    <span class="lineIcon lineIcon--center" aria-hidden="true"></span>
+                  </div>
+                  <div class="panel__row panel__row--wrap">
+                    <input id="centerColorInput" class="panel__input panel__input--color" type="color" value="#d32f2f" />
+                    <input id="centerSizeInput" class="panel__input panel__input--number" type="number" min="1" max="60" step="1" value="10" />
+                    <span class="panel__note">px</span>
+                  </div>
+                </div>
+              </div>
+              <div class="panel__note">These settings drive the quick Reference, Hidden, and Center preset buttons.</div>
+            </div>
+
+            <div class="panel__group panel__group--wide">
+              <label class="panel__label">Scale</label>
+              <div class="panel__row panel__row--wrap">
+                <span id="scaleOut" class="panel__note">1 mm = 3.780 px</span>
+                <button id="resetScaleBtn" class="panel__btn" type="button">Reset</button>
+              </div>
+              <div class="panel__note">Use the 📏 button on the left to set scale from a selected line.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hint">
+        Wheel zooms • Space + drag pans • Ctrl/Cmd bypasses snapping • Right-click: finish PolyFill / reset Arc • Ctrl/Cmd + Z undo • Ctrl/Cmd + Y redo • Delete removes selected
+      </div>
+    </section>
+  </main>
+
+  <script src="whiteboard.shared.js"></script>
+  <script src="whiteboard.geometry.js"></script>
+  <script src="whiteboard.render.js"></script>
+  <script src="whiteboard.io.js"></script>
+  <script src="whiteboard.ui.js"></script>
+  <script src="whiteboard.js"></script>
+</body>
+</html>
