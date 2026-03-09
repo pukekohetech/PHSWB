@@ -188,12 +188,20 @@ window.WBShared = (() => {
 
 
 
-  function getLineDash(style, size = 1) {
-    const s = Math.max(1, Number(size) || 1);
-    if (style === "hidden") return [s * 4, s * 3];
-    if (style === "center") return [s * 8, s * 3, s * 1.2, s * 3];
-    return [];
-  }
+function getLineDash(style, size = 1) {
+  const s = Math.max(1, Number(size) || 1);
+
+  if (style === "hidden")
+    return [s * 4, s * 3];
+
+  if (style === "center")
+    return [s * 8, s * 3, s * 1.2, s * 3];
+
+  if (style === "reference")
+    return [s * 10, s * 3, s * 10, s * 3]; // long dash dash
+
+  return [];
+}
 
   function svgDashArray(style, size = 1) {
     return getLineDash(style, size).map(n => Number(n.toFixed(3))).join(" ");
