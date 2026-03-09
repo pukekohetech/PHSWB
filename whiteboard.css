@@ -1117,8 +1117,9 @@ html, body{ height:100%; }
 }
 
 .lineIcon--reference{
-  border-top-style: dashed;
-  border-top-width: 3px;
+  border-top: 0;
+  height: 3px;
+  background: repeating-linear-gradient(90deg, currentColor 0 12px, transparent 12px 16px, currentColor 16px 19px, transparent 19px 23px, currentColor 23px 26px, transparent 26px 30px);
 }
 
 .linePresetGrid{
