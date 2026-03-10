@@ -2142,7 +2142,7 @@ state.selection = [];
         return;
       }
     }
-  });
+
 
 document.addEventListener("keyup", e => {
   const activeEl = document.activeElement;
