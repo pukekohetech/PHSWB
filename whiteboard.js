@@ -2068,9 +2068,14 @@ state.selection = [];
   }
 
   if (key === "v") {
-    e.preventDefault();
-    pasteClipboard();
-    return;
+    const hasObjectClipboard =
+      Array.isArray(state.clipboard) && state.clipboard.length > 0;
+
+    if (hasObjectClipboard) {
+      e.preventDefault();
+      pasteClipboard();
+      return;
+    }
   }
 
   if (key === "x") {
@@ -2078,30 +2083,32 @@ state.selection = [];
     cutSelection();
     return;
   }
-      if (key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        hardResetGesture();
-        cancelPolyDraft();
-     if (state.undo.length) {
-  state.redo.push(JSON.stringify(snapshot()));
-  applySnapshot(JSON.parse(state.undo.pop()));
-  syncStyleControlsFromSelection();
 
-        }
-        return;
-      }
-      if (key === "y" || (key === "z" && e.shiftKey)) {
-        e.preventDefault();
-        hardResetGesture();
-        cancelPolyDraft();
-      if (state.redo.length) {
-  state.undo.push(JSON.stringify(snapshot()));
-  applySnapshot(JSON.parse(state.redo.pop()));
-  syncStyleControlsFromSelection();
-}
-        return;
-      }
+  if (key === "z" && !e.shiftKey) {
+    e.preventDefault();
+    hardResetGesture();
+    cancelPolyDraft();
+
+    if (state.undo.length) {
+      state.redo.push(JSON.stringify(snapshot()));
+      applySnapshot(JSON.parse(state.undo.pop()));
+      syncStyleControlsFromSelection();
     }
+    return;
+  }
+
+  if (key === "y" || (key === "z" && e.shiftKey)) {
+    e.preventDefault();
+    hardResetGesture();
+    cancelPolyDraft();
+
+    if (state.redo.length) {
+      state.undo.push(JSON.stringify(snapshot()));
+      applySnapshot(JSON.parse(state.redo.pop()));
+      syncStyleControlsFromSelection();
+    }
+    return;
+  }
 
     if (!typing && !gesture.active) {
       const digit = /^[0-9]$/.test(e.key) ? Number(e.key) : null;
