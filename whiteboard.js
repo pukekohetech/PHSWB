@@ -1344,7 +1344,7 @@ function onCanvasContextMenu(e) {
 function onPointerDown(e) {
   if (!inkCanvas.contains(e.target)) return;
   if (e.button === 2) return;             // let right-click be handled separately
-  if (e.pointerType !== "touch" && e.button !== 0) return;
+ if (e.pointerType !== "touch" && e.button !== 0 && e.button !== 1) return;
 
 
     gesture.active = true;
@@ -1365,11 +1365,11 @@ function onPointerDown(e) {
 
     gesture.snapCache = buildSnapCache();
 
-    if (spacePanning) {
-      gesture.mode = "pan";
-      inkCanvas.style.cursor = "grabbing";
-      return;
-    }
+   if (spacePanning || e.button === 1) {
+  gesture.mode = "pan";
+  inkCanvas.style.cursor = "grabbing";
+  return;
+}
 
     if (state.tool === "polyFill") {
       const bypassSnap = isMac ? e.metaKey : e.ctrlKey;
@@ -2166,6 +2166,10 @@ state.selection = [];
   inkCanvas.addEventListener("pointerup", onPointerUp);
   inkCanvas.addEventListener("pointercancel", onPointerUp);
   inkCanvas.addEventListener("contextmenu", onCanvasContextMenu);
+
+   inkCanvas.addEventListener("mousedown", e => {
+  if (e.button === 1) e.preventDefault();
+});
 
   inkCanvas.addEventListener("dblclick", e => {
     if (state.tool !== "polyFill" || !polyDraft.active) return;
