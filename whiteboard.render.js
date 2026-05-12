@@ -24,7 +24,9 @@ window.WBRender = (() => {
       computeHandles,
       polyDraft,
       dpr,
-      getLineDash
+      getLineDash,
+      findObjById,
+      perspectiveTargetPoints
     } = ctx;
 
     function clearCtx(canvasCtx, canvas) {
@@ -90,6 +92,46 @@ window.WBRender = (() => {
       applyWorldTransform(inkCtx);
       inkCtx.lineCap = "round";
       inkCtx.lineJoin = "round";
+
+
+      if (obj.kind === "perspectiveGuide") {
+        inkCtx.globalCompositeOperation = "source-over";
+        const target = findObjById ? findObjById(obj.targetId) : null;
+        const vps = [];
+        if (obj.vp1) vps.push(obj.vp1);
+        if ((obj.mode || 1) >= 2 && obj.vp2) vps.push(obj.vp2);
+
+        inkCtx.strokeStyle = obj.color || "#111";
+        inkCtx.fillStyle = obj.color || "#111";
+        inkCtx.lineWidth = obj.size || 2;
+        inkCtx.setLineDash([].concat(getLineDash(obj.lineStyle || "reference", obj.size || 2)));
+
+        for (const vp of vps) {
+          const srcPts = perspectiveTargetPoints ? perspectiveTargetPoints(target, vp, obj) : [];
+          inkCtx.beginPath();
+          for (const p of srcPts) {
+            inkCtx.moveTo(p.x, p.y);
+            inkCtx.lineTo(vp.x, vp.y);
+          }
+          inkCtx.stroke();
+        }
+
+        inkCtx.setLineDash([]);
+        for (let i = 0; i < vps.length; i++) {
+          const vp = vps[i];
+          inkCtx.beginPath();
+          inkCtx.arc(vp.x, vp.y, 7 / (state.zoom || 1), 0, Math.PI * 2);
+          inkCtx.fill();
+          inkCtx.strokeStyle = "rgba(255,255,255,0.95)";
+          inkCtx.lineWidth = 2 / (state.zoom || 1);
+          inkCtx.stroke();
+          inkCtx.strokeStyle = obj.color || "#111";
+          inkCtx.lineWidth = obj.size || 2;
+        }
+
+        inkCtx.restore();
+        return;
+      }
 
       if (obj.kind === "polyFill") {
         inkCtx.globalCompositeOperation = "source-over";
@@ -352,6 +394,34 @@ window.WBRender = (() => {
       uiCtx.strokeStyle = "rgba(46, 204, 113, 0.95)";
       uiCtx.lineWidth = 2;
       uiCtx.setLineDash([6, 4]);
+
+      if (uiHandles.perspective && uiHandles.perspective.length) {
+        if (uiHandles.box) {
+          const b = uiHandles.box;
+          uiCtx.strokeStyle = "rgba(0, 120, 255, 0.65)";
+          uiCtx.setLineDash([6, 4]);
+          uiCtx.strokeRect(b.x, b.y, b.w, b.h);
+          uiCtx.setLineDash([]);
+        }
+
+        for (const p of uiHandles.perspective) {
+          uiCtx.fillStyle = "rgba(255,255,255,0.98)";
+          uiCtx.strokeStyle = "rgba(0, 120, 255, 0.95)";
+          uiCtx.lineWidth = 2;
+          uiCtx.beginPath();
+          uiCtx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+          uiCtx.fill();
+          uiCtx.stroke();
+
+          uiCtx.fillStyle = "rgba(0, 120, 255, 0.95)";
+          uiCtx.beginPath();
+          uiCtx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+          uiCtx.fill();
+        }
+
+        uiCtx.restore();
+        return;
+      }
 
       if (!uiHandles.poly) {
         const b = uiHandles.box;

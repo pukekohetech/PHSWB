@@ -107,7 +107,7 @@
       <div class="dockSep"></div>
 
       <button class="dockBtn is-active" data-tool="pen" type="button" title="Freehand (P)">✏️</button>
-      <button class="dockBtn" data-tool="line" type="button" title="Line (L)">／</button>
+      <button class="dockBtn" data-tool="line" type="button" title="Line (L) — snaps/links endpoints; perspective construction lines stay synced; press L while drawing/in line mode to auto-link overlaps">／</button>
       <button class="dockBtn" data-tool="rect" type="button" title="Rectangle (R)">▭</button>
       <button class="dockBtn" data-tool="circle" type="button" title="Circle (C)">◯</button>
       <button class="dockBtn" data-tool="arc" type="button" title="Arc (G)">⌒</button>
@@ -115,6 +115,8 @@
       <button class="dockBtn" data-tool="text" type="button" title="Text (T)">T</button>
       <button class="dockBtn" data-tool="eraser" type="button" title="Eraser (E)">🧽</button>
       <button class="dockBtn" data-tool="polyFill" type="button" title="Polygon Fill (K)">⬠</button>
+      <button class="dockBtn" data-tool="perspective1" type="button" title="1-point perspective from selected shape">1P</button>
+      <button class="dockBtn" data-tool="perspective2" type="button" title="2-point perspective from selected shape">2P</button>
 
       <button class="dockBtn" id="undoBtn" type="button" title="Undo">↶</button>
       <button class="dockBtn" id="redoBtn" type="button" title="Redo">↷</button>
@@ -261,7 +263,7 @@
       </div>
 
       <div class="hint">
-        Wheel zooms • Space + drag pans • Ctrl/Cmd bypasses snapping • Right-click: finish PolyFill / reset Arc • Ctrl/Cmd + Z undo • Ctrl/Cmd + Y redo • Delete removes selected
+        Wheel zooms • Space + drag pans • Ctrl/Cmd bypasses snapping/free page points • Line endpoints link when snapped to endpoints, intersections, or line bodies • Perspective-linked construction lines move as a synced group instead of leaving one end pinned to the page • Press L while drawing/in line mode to auto-link overlaps/intersections • Start a line from a shape corner/end and draw toward a vanishing point to make it follow that source + point proportionally • Circles and arcs use tangent projection points for perspective guides • Right-click: finish PolyFill / reset Arc • Ctrl/Cmd + Z undo • Ctrl/Cmd + Y redo • Delete removes selected
       </div>
     </section>
   </main>

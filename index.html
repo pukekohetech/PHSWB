@@ -96,7 +96,7 @@
       <div class="dockSep"></div>
 
       <button class="dockBtn is-active" data-tool="pen" type="button" title="Freehand (P)">✏️</button>
-      <button class="dockBtn" data-tool="line" type="button" title="Line (L)">／</button>
+      <button class="dockBtn" data-tool="line" type="button" title="Line (L) — snaps/links endpoints and follows perspective directions">／</button>
       <button class="dockBtn" data-tool="rect" type="button" title="Rectangle (R)">▭</button>
       <button class="dockBtn" data-tool="circle" type="button" title="Circle (C)">◯</button>
       <button class="dockBtn" data-tool="arc" type="button" title="Arc (G)">⌒</button>
@@ -104,6 +104,8 @@
       <button class="dockBtn" data-tool="text" type="button" title="Text (T)">T</button>
       <button class="dockBtn" data-tool="eraser" type="button" title="Eraser (E)">🧽</button>
       <button class="dockBtn" data-tool="polyFill" type="button" title="Polygon Fill (K)">⬠</button>
+      <button class="dockBtn" data-tool="perspective1" type="button" title="1-point perspective from selected shape">1P</button>
+      <button class="dockBtn" data-tool="perspective2" type="button" title="2-point perspective from selected shape">2P</button>
 
       <button class="dockBtn" id="undoBtn" type="button" title="Undo">↶</button>
       <button class="dockBtn" id="redoBtn" type="button" title="Redo">↷</button>
@@ -250,7 +252,7 @@
       </div>
 
       <div class="hint">
-        Wheel zooms • Space + drag pans • Ctrl/Cmd bypasses snapping • Right-click: finish PolyFill / reset Arc • Ctrl/Cmd + Z undo • Ctrl/Cmd + Y redo • Delete removes selected
+        Wheel zooms • Space + drag pans • Ctrl/Cmd bypasses snapping/free page points • Line endpoints link when snapped to endpoints, intersections, or line bodies • Perspective-linked line lengths scale proportionally with their ray • Right-click: finish PolyFill / reset Arc • Ctrl/Cmd + Z undo • Ctrl/Cmd + Y redo • Delete removes selected
       </div>
     </section>
   </main>

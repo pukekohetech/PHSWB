@@ -194,7 +194,11 @@ clipboard: null,
     arcLastA: 0,
     arcAccum: 0,
 
-    snapCache: null
+    snapCache: null,
+    perspectivePointName: null,
+    lineAnchorRef: null,
+    lineEndAnchorRef: null,
+    forceLinkActive: false
   };
 
   let spacePanning = false;
@@ -501,11 +505,34 @@ state.selection = [];
     uiHandles.corners = null;
     uiHandles.poly = null;
     uiHandles.center = null;
+    uiHandles.perspective = null;
 
     if (state.tool !== "select") return;
     if (state.selectionIndex < 0) return;
     const obj = state.objects[state.selectionIndex];
     if (!obj) return;
+
+    if (obj.kind === "perspectiveGuide") {
+      const vps = [];
+      if (obj.vp1) vps.push({ name: "vp1", ...worldToScreen(obj.vp1.x, obj.vp1.y) });
+      if ((obj.mode || 1) >= 2 && obj.vp2) vps.push({ name: "vp2", ...worldToScreen(obj.vp2.x, obj.vp2.y) });
+      if (!vps.length) return;
+
+      const b = objectBounds(obj);
+      const p1 = worldToScreen(b.minX, b.minY);
+      const p2 = worldToScreen(b.maxX, b.maxY);
+      const x = Math.min(p1.x, p2.x);
+      const y = Math.min(p1.y, p2.y);
+      const w = Math.abs(p2.x - p1.x);
+      const h = Math.abs(p2.y - p1.y);
+
+      uiHandles.visible = true;
+      uiHandles.box = { x, y, w, h };
+      uiHandles.perspective = vps.map(vp => ({ ...vp, r: 9 }));
+      uiHandles.corners = [];
+      uiHandles.rotate = null;
+      return;
+    }
 
     const b = objectBounds(obj);
     const hasOwnRot = (obj.kind === "rect" || obj.kind === "circle" || obj.kind === "text") && (obj.rot || 0);
@@ -582,6 +609,14 @@ state.selection = [];
   function hitHandle(sx, sy) {
     if (!uiHandles.visible) return null;
 
+    if (uiHandles.perspective) {
+      for (const p of uiHandles.perspective) {
+        const dx = sx - p.x;
+        const dy = sy - p.y;
+        if (Math.hypot(dx, dy) <= p.r + 7) return { kind: "perspectivePoint", point: p.name };
+      }
+    }
+
     if (uiHandles.rotate) {
       const dx = sx - uiHandles.rotate.x;
       const dy = sy - uiHandles.rotate.y;
@@ -638,12 +673,14 @@ state.selection = [];
     segIntersection,
     getLineDash,
     svgDashArray,
-    detectLineStyleFromDashArray
+    detectLineStyleFromDashArray,
+    findObjById
   });
 
   const {
     pointOnArc,
     rectEdges,
+    perspectiveTargetPoints,
     objectBounds,
     findHit,
     moveObject,
@@ -658,6 +695,488 @@ state.selection = [];
     snapPolyPoint,
     exportWorldBounds
   } = geometry;
+
+  function cloneRef(ref) {
+    return ref ? JSON.parse(JSON.stringify(ref)) : null;
+  }
+
+  function isLinkRef(ref) {
+    return !!ref && (ref.type === "anchor" || ref.type === "intersection" || ref.type === "segmentPoint");
+  }
+
+  function preferredAnchorAt(pt) {
+    const cache = gesture.snapCache || { endpoints: [] };
+    const radiusWorld = SNAP_RADIUS_PX / (state.zoom || 1);
+    let best = null;
+    let bestD = radiusWorld;
+
+    for (const candidate of cache.endpoints || []) {
+      if (!candidate.ref || candidate.ref.type !== "anchor") continue;
+      const d = Math.hypot(pt.x - candidate.x, pt.y - candidate.y);
+      if (d <= bestD) {
+        bestD = d;
+        best = candidate;
+      }
+    }
+
+    return best ? { x: best.x, y: best.y, ref: cloneRef(best.ref) } : null;
+  }
+
+  function textCornerPoint(obj, index) {
+    const m = textMetrics(obj);
+    const cx = obj.x + m.w / 2;
+    const cy = obj.y + m.h / 2;
+    const ang = obj.rot || 0;
+    const pts = [
+      { x: obj.x,       y: obj.y },
+      { x: obj.x + m.w, y: obj.y },
+      { x: obj.x + m.w, y: obj.y + m.h },
+      { x: obj.x,       y: obj.y + m.h }
+    ].map(point => (ang ? rotateAround(point.x, point.y, cx, cy, ang) : point));
+    return pts[Math.max(0, Math.min(3, index || 0))] || null;
+  }
+
+  function circleQuarterPoint(obj, index) {
+    const cx = (obj.x1 + obj.x2) / 2;
+    const cy = (obj.y1 + obj.y2) / 2;
+    const rx = Math.abs(obj.x2 - obj.x1) / 2;
+    const ry = Math.abs(obj.y2 - obj.y1) / 2;
+    const ang = obj.rot || 0;
+    const t = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2][Math.max(0, Math.min(3, index || 0))] || 0;
+    const ex = Math.cos(t) * rx;
+    const ey = Math.sin(t) * ry;
+    return {
+      x: cx + ex * Math.cos(ang) - ey * Math.sin(ang),
+      y: cy + ex * Math.sin(ang) + ey * Math.cos(ang)
+    };
+  }
+
+  function resolveSegmentRef(ref) {
+    if (!ref) return null;
+
+    if (ref.type === "perspectiveRay") {
+      const guide = findObjById(ref.guideId);
+      if (!guide || guide.kind !== "perspectiveGuide") return null;
+      const target = findObjById(guide.targetId);
+      const vp = guide[ref.vpName];
+      if (!target || !vp) return null;
+      const pts = perspectiveTargetPoints ? perspectiveTargetPoints(target, vp, guide) : [];
+      const src = pts[Math.max(0, Math.min(pts.length - 1, Number(ref.sourceIndex) || 0))];
+      return src ? { x1: src.x, y1: src.y, x2: vp.x, y2: vp.y } : null;
+    }
+
+    if (ref.type !== "segment" || !ref.objId) return null;
+    const obj = findObjById(ref.objId);
+    if (!obj) return null;
+
+    if ((obj.kind === "line" || obj.kind === "arrow") && ref.kind === "line") {
+      return { x1: obj.x1, y1: obj.y1, x2: obj.x2, y2: obj.y2 };
+    }
+
+    if (obj.kind === "rect" && ref.kind === "rectEdge") {
+      const edges = rectEdges(obj);
+      return edges[Number(ref.index) || 0] || null;
+    }
+
+    if (obj.kind === "polyFill" && ref.kind === "polyEdge") {
+      const pts = obj.pts || [];
+      const i = Number(ref.index) || 0;
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      return a && b ? { x1: a.x, y1: a.y, x2: b.x, y2: b.y } : null;
+    }
+
+    if (obj.kind === "text" && ref.kind === "textEdge") {
+      const i = Number(ref.index) || 0;
+      const a = textCornerPoint(obj, i);
+      const b = textCornerPoint(obj, (i + 1) % 4);
+      return a && b ? { x1: a.x, y1: a.y, x2: b.x, y2: b.y } : null;
+    }
+
+    return null;
+  }
+
+  function resolveIntersectionPoint(ref) {
+    if (!ref || ref.type !== "intersection") return null;
+    const a = resolveSegmentRef(ref.a);
+    const b = resolveSegmentRef(ref.b);
+    if (!a || !b) return null;
+    return segIntersection(a, b);
+  }
+
+  function resolveSegmentPoint(ref) {
+    if (!ref || ref.type !== "segmentPoint") return null;
+    const seg = resolveSegmentRef(ref.segment);
+    if (!seg) return null;
+    const t = Math.max(0, Math.min(1, Number(ref.t) || 0));
+    return {
+      x: seg.x1 + (seg.x2 - seg.x1) * t,
+      y: seg.y1 + (seg.y2 - seg.y1) * t
+    };
+  }
+
+  function resolveAnchorPoint(ref) {
+    if (!ref) return null;
+    if (ref.type === "intersection") return resolveIntersectionPoint(ref);
+    if (ref.type === "segmentPoint") return resolveSegmentPoint(ref);
+    if (ref.type !== "anchor") return null;
+    const obj = findObjById(ref.objId);
+    if (!obj) return null;
+    const index = ref.index || 0;
+
+    if ((obj.kind === "line" || obj.kind === "arrow") && ref.kind === "lineEnd") {
+      return index === 1 ? { x: obj.x2, y: obj.y2 } : { x: obj.x1, y: obj.y1 };
+    }
+
+    if (obj.kind === "rect" && ref.kind === "rectCorner") {
+      const corners = rectEdges(obj).map(edge => ({ x: edge.x1, y: edge.y1 }));
+      return corners[Math.max(0, Math.min(3, index))] || null;
+    }
+
+    if (obj.kind === "circle" && ref.kind === "circleQuarter") {
+      return circleQuarterPoint(obj, index);
+    }
+
+    if (obj.kind === "circle" && ref.kind === "circleTangent") {
+      const guide = findObjById(ref.guideId);
+      const vp = guide && guide.kind === "perspectiveGuide" ? guide[ref.vpName] : null;
+      const pts = perspectiveTargetPoints ? perspectiveTargetPoints(obj, vp, guide) : [];
+      const side = Number.isFinite(Number(ref.side)) ? Number(ref.side) : index;
+      const pt = pts[Math.max(0, Math.min(pts.length - 1, side || 0))];
+      return pt ? { x: pt.x, y: pt.y } : null;
+    }
+
+    if (obj.kind === "arc" && ref.kind === "arcEnd") {
+      return pointOnArc(obj, index === 1 ? "end" : "start");
+    }
+
+    if (obj.kind === "arc" && ref.kind === "arcTangent") {
+      const guide = findObjById(ref.guideId);
+      const vp = guide && guide.kind === "perspectiveGuide" ? guide[ref.vpName] : null;
+      const pts = perspectiveTargetPoints ? perspectiveTargetPoints(obj, vp, guide) : [];
+      const side = Number.isFinite(Number(ref.side)) ? Number(ref.side) : index;
+      const pt = pts[Math.max(0, Math.min(pts.length - 1, side || 0))];
+      return pt ? { x: pt.x, y: pt.y } : null;
+    }
+
+    if (obj.kind === "polyFill" && ref.kind === "polyVertex") {
+      const pt = (obj.pts || [])[index];
+      return pt ? { x: pt.x, y: pt.y } : null;
+    }
+
+    if ((obj.kind === "stroke" || obj.kind === "erase") && ref.kind === "strokeEnd") {
+      const pts = obj.points || [];
+      const pt = index === 1 ? pts[pts.length - 1] : pts[0];
+      return pt ? { x: pt.x, y: pt.y } : null;
+    }
+
+    if (obj.kind === "text" && ref.kind === "textCorner") {
+      return textCornerPoint(obj, index);
+    }
+
+    return null;
+  }
+
+  function resolveVanishingPoint(ref) {
+    if (!ref || !ref.guideId || !ref.vpName) return null;
+    const guide = findObjById(ref.guideId);
+    if (!guide || guide.kind !== "perspectiveGuide") return null;
+    const vp = guide[ref.vpName];
+    return vp ? { x: vp.x, y: vp.y } : null;
+  }
+
+  function normalizePerspectiveAnchorForVP(anchorRef, perspectiveRef, startPt) {
+    if (!anchorRef || anchorRef.type !== "anchor" || !perspectiveRef) return anchorRef;
+    const obj = findObjById(anchorRef.objId);
+    if (!obj || (obj.kind !== "circle" && obj.kind !== "arc")) return anchorRef;
+
+    const guide = findObjById(perspectiveRef.guideId);
+    const vp = guide && guide.kind === "perspectiveGuide" ? guide[perspectiveRef.vpName] : null;
+    if (!vp || !perspectiveTargetPoints) return anchorRef;
+
+    const tangents = perspectiveTargetPoints(obj, vp, guide).filter(p => p && p.ref);
+    if (!tangents.length) return anchorRef;
+    if (anchorRef.kind === "circleTangent" || anchorRef.kind === "arcTangent") return anchorRef;
+
+    let best = tangents[0];
+    let bestD = Infinity;
+    const probe = startPt || resolveAnchorPoint(anchorRef) || (obj.kind === "arc" ? { x: obj.cx + obj.r, y: obj.cy } : { x: obj.x1, y: obj.y1 });
+    for (const t of tangents) {
+      const d = Math.hypot(t.x - probe.x, t.y - probe.y);
+      if (d < bestD) {
+        bestD = d;
+        best = t;
+      }
+    }
+    return best.ref ? cloneRef(best.ref) : anchorRef;
+  }
+
+  function findBestLinkRefAtPoint(pt, skipObjId) {
+    const saved = gesture.snapCache;
+    gesture.snapCache = buildSnapCache(skipObjId);
+    const hit = snapPointPreferEndsIntersections(pt);
+    gesture.snapCache = saved;
+    return hit && hit.ref && isLinkRef(hit.ref) ? cloneRef(hit.ref) : null;
+  }
+
+  function lineSegmentFromObject(obj) {
+    if (!obj || (obj.kind !== "line" && obj.kind !== "arrow")) return null;
+    if (![obj.x1, obj.y1, obj.x2, obj.y2].every(Number.isFinite)) return null;
+    if (Math.hypot(obj.x2 - obj.x1, obj.y2 - obj.y1) <= 0.001) return null;
+    return { x1: obj.x1, y1: obj.y1, x2: obj.x2, y2: obj.y2 };
+  }
+
+  function pointProjectionOnSegment(pt, seg) {
+    const vx = seg.x2 - seg.x1;
+    const vy = seg.y2 - seg.y1;
+    const len2 = vx * vx + vy * vy;
+    if (len2 <= 1e-9) return null;
+    const t = clamp((((pt.x - seg.x1) * vx) + ((pt.y - seg.y1) * vy)) / len2, 0, 1);
+    return {
+      x: seg.x1 + vx * t,
+      y: seg.y1 + vy * t,
+      t
+    };
+  }
+
+  function segmentPointRefForLine(obj, t) {
+    if (!obj || !obj._id) return null;
+    return {
+      type: "segmentPoint",
+      segment: { type: "segment", objId: obj._id, kind: "line" },
+      t: clamp(t || 0, 0, 1)
+    };
+  }
+
+  function setEndpointLink(obj, endName, ref) {
+    if (!obj || !ref) return false;
+    if (!obj.endpointLinks) obj.endpointLinks = {};
+    const before = JSON.stringify(obj.endpointLinks[endName] || null);
+    obj.endpointLinks[endName] = cloneRef(ref);
+    if (obj.endpointLinks.floatFree) delete obj.endpointLinks.floatFree;
+    return before !== JSON.stringify(obj.endpointLinks[endName]);
+  }
+
+  function autoLinkLineObject(obj) {
+    if (!obj || (obj.kind !== "line" && obj.kind !== "arrow") || obj.perspectiveLink || !obj._id) return false;
+
+    const startRef = findBestLinkRefAtPoint({ x: obj.x1, y: obj.y1 }, obj._id);
+    const endRef = findBestLinkRefAtPoint({ x: obj.x2, y: obj.y2 }, obj._id);
+
+    if (startRef || endRef) {
+      obj.endpointLinks = {
+        ...(startRef ? { start: startRef } : {}),
+        ...(endRef ? { end: endRef } : {})
+      };
+      updateEndpointLinkedObject(obj);
+      return true;
+    }
+
+    if (obj.endpointLinks) {
+      delete obj.endpointLinks;
+      return true;
+    }
+    return false;
+  }
+
+  function autoLinkLinesTouchingDrawnLine(activeLine) {
+    if (!activeLine || (activeLine.kind !== "line" && activeLine.kind !== "arrow") || !activeLine._id) return false;
+    const activeSeg = lineSegmentFromObject(activeLine);
+    if (!activeSeg) return false;
+
+    const radiusWorld = (SNAP_RADIUS_PX * 1.35) / (state.zoom || 1);
+    let changed = false;
+
+    // First repair the line being drawn: its two ends can link to any line body,
+    // endpoint, intersection, projection ray, or perspective guide ray already under them.
+    changed = autoLinkLineObject(activeLine) || changed;
+
+    for (const obj of state.objects) {
+      if (!obj || obj === activeLine || obj._id === activeLine._id || obj.hidden) continue;
+      if (obj.kind !== "line" && obj.kind !== "arrow") continue;
+      if (obj.perspectiveLink) continue;
+
+      const candidates = [
+        { endName: "start", pt: { x: obj.x1, y: obj.y1 } },
+        { endName: "end", pt: { x: obj.x2, y: obj.y2 } }
+      ];
+
+      for (const c of candidates) {
+        const hit = pointProjectionOnSegment(c.pt, activeSeg);
+        if (!hit) continue;
+        const d = Math.hypot(c.pt.x - hit.x, c.pt.y - hit.y);
+        if (d > radiusWorld) continue;
+        const ref = segmentPointRefForLine(activeLine, hit.t);
+        if (!ref) continue;
+        changed = setEndpointLink(obj, c.endName, ref) || changed;
+      }
+    }
+
+    updatePerspectiveLinks();
+    return changed;
+  }
+
+  function autoLinkOverlappingLines(lineObjs) {
+    const items = (lineObjs || []).filter(o => o && (o.kind === "line" || o.kind === "arrow"));
+    let changed = false;
+    for (let pass = 0; pass < 3; pass++) {
+      let passChanged = false;
+      for (const obj of items) {
+        passChanged = autoLinkLineObject(obj) || passChanged;
+        passChanged = autoLinkLinesTouchingDrawnLine(obj) || passChanged;
+      }
+      updatePerspectiveLinks();
+      changed = changed || passChanged;
+      if (!passChanged) break;
+    }
+    return changed;
+  }
+
+  function updatePerspectiveLinkedObject(obj) {
+    if (!obj || (obj.kind !== "line" && obj.kind !== "arrow") || !obj.perspectiveLink) return false;
+    const anchor = resolveAnchorPoint(obj.perspectiveLink.anchor);
+    const vp = resolveVanishingPoint(obj.perspectiveLink.vp);
+    if (!anchor || !vp) return false;
+
+    obj.x1 = anchor.x;
+    obj.y1 = anchor.y;
+
+    const dx = vp.x - anchor.x;
+    const dy = vp.y - anchor.y;
+    const lenToVp = Math.hypot(dx, dy);
+    if (!Number.isFinite(lenToVp) || lenToVp < 0.001) return false;
+
+    if (obj.perspectiveLink.endMode === "point") {
+      obj.x2 = vp.x;
+      obj.y2 = vp.y;
+      obj.perspectiveLink.rayT = 1;
+      obj.perspectiveLink.lengthWorld = lenToVp;
+      return true;
+    }
+
+    let rayT = Number(obj.perspectiveLink.rayT);
+    if (!Number.isFinite(rayT) || rayT <= 0) {
+      let lengthWorld = Number(obj.perspectiveLink.lengthWorld);
+      if (!Number.isFinite(lengthWorld) || lengthWorld <= 0.001) {
+        lengthWorld = Math.hypot(obj.x2 - obj.x1, obj.y2 - obj.y1) || pxPerMm();
+      }
+      rayT = Math.max(0.001, lengthWorld / lenToVp);
+      obj.perspectiveLink.rayT = rayT;
+    }
+
+    const lengthWorld = lenToVp * rayT;
+    obj.perspectiveLink.lengthWorld = lengthWorld;
+    obj.x2 = anchor.x + (dx / lenToVp) * lengthWorld;
+    obj.y2 = anchor.y + (dy / lenToVp) * lengthWorld;
+    return true;
+  }
+
+  function isPerspectiveConstructionObject(obj, seen = new Set()) {
+    if (!obj) return false;
+    if (obj.kind === "perspectiveGuide") return true;
+    if (obj.perspectiveLink) return true;
+    if (!obj._id || seen.has(obj._id)) return false;
+    seen.add(obj._id);
+
+    if (obj.endpointLinks) {
+      if (obj.endpointLinks.floatFree) return true;
+      if (isPerspectiveConstructionRef(obj.endpointLinks.start, seen)) return true;
+      if (isPerspectiveConstructionRef(obj.endpointLinks.end, seen)) return true;
+    }
+    return false;
+  }
+
+  function isPerspectiveConstructionRef(ref, seen = new Set()) {
+    if (!ref) return false;
+    if (ref.type === "perspectiveRay" || ref.type === "perspectivePoint") return true;
+    if (ref.type === "intersection") {
+      return isPerspectiveConstructionRef(ref.a, seen) || isPerspectiveConstructionRef(ref.b, seen);
+    }
+    if (ref.type === "segmentPoint") {
+      return isPerspectiveConstructionRef(ref.segment, seen);
+    }
+    if ((ref.type === "segment" || ref.type === "anchor") && ref.objId) {
+      const target = findObjById(ref.objId);
+      return isPerspectiveConstructionObject(target, seen);
+    }
+    return false;
+  }
+
+  function ensureFloatingFreeEnd(obj, linkedEnd, linkedPt) {
+    if (!obj || !obj.endpointLinks || !linkedPt) return null;
+    let f = obj.endpointLinks.floatFree;
+    if (!f || f.linkedEnd !== linkedEnd || !Number.isFinite(f.dx) || !Number.isFinite(f.dy)) {
+      if (linkedEnd === "start") {
+        f = { linkedEnd, dx: obj.x2 - linkedPt.x, dy: obj.y2 - linkedPt.y };
+      } else {
+        f = { linkedEnd, dx: obj.x1 - linkedPt.x, dy: obj.y1 - linkedPt.y };
+      }
+      obj.endpointLinks.floatFree = f;
+    }
+    return f;
+  }
+
+  function updateEndpointLinkedObject(obj) {
+    if (!obj || (obj.kind !== "line" && obj.kind !== "arrow") || obj.perspectiveLink || !obj.endpointLinks) return false;
+
+    let changed = false;
+    const start = resolveAnchorPoint(obj.endpointLinks.start);
+    const end = resolveAnchorPoint(obj.endpointLinks.end);
+
+    if (start && end) {
+      obj.x1 = start.x;
+      obj.y1 = start.y;
+      obj.x2 = end.x;
+      obj.y2 = end.y;
+      if (obj.endpointLinks.floatFree) delete obj.endpointLinks.floatFree;
+      return true;
+    }
+
+    if (start) {
+      const shouldFloatFreeEnd = isPerspectiveConstructionRef(obj.endpointLinks.start) || !!obj.endpointLinks.floatFree;
+      if (shouldFloatFreeEnd) {
+        const f = ensureFloatingFreeEnd(obj, "start", start);
+        obj.x1 = start.x;
+        obj.y1 = start.y;
+        if (f) {
+          obj.x2 = start.x + f.dx;
+          obj.y2 = start.y + f.dy;
+        }
+      } else {
+        obj.x1 = start.x;
+        obj.y1 = start.y;
+      }
+      changed = true;
+    }
+
+    if (end) {
+      const shouldFloatFreeEnd = isPerspectiveConstructionRef(obj.endpointLinks.end) || !!obj.endpointLinks.floatFree;
+      if (shouldFloatFreeEnd) {
+        const f = ensureFloatingFreeEnd(obj, "end", end);
+        obj.x2 = end.x;
+        obj.y2 = end.y;
+        if (f) {
+          obj.x1 = end.x + f.dx;
+          obj.y1 = end.y + f.dy;
+        }
+      } else {
+        obj.x2 = end.x;
+        obj.y2 = end.y;
+      }
+      changed = true;
+    }
+
+    if (!start && !end) delete obj.endpointLinks;
+    return changed;
+  }
+
+  function updatePerspectiveLinks() {
+    // A few light passes let normal snapped connectors follow perspective-linked lines.
+    for (let pass = 0; pass < 4; pass++) {
+      for (const obj of state.objects) updatePerspectiveLinkedObject(obj);
+      for (const obj of state.objects) updateEndpointLinkedObject(obj);
+    }
+  }
 
   const render = window.WBRender.createRenderApi({
     state,
@@ -678,14 +1197,26 @@ state.selection = [];
     polyDraft,
     dpr,
     uiHandles,
-    getLineDash
+    getLineDash,
+    findObjById,
+    perspectiveTargetPoints
   });
 
   const {
     applyBgTransform,
-    resizeAll,
-    redrawAll
+    resizeAll: resizeAllRaw,
+    redrawAll: redrawAllRaw
   } = render;
+
+  function redrawAll() {
+    updatePerspectiveLinks();
+    redrawAllRaw();
+  }
+
+  function resizeAll() {
+    updatePerspectiveLinks();
+    resizeAllRaw();
+  }
 
   const ui = window.WBUI.createUIApi({
     state,
@@ -768,6 +1299,7 @@ state.selection = [];
     screenToWorld,
     pointOnArc,
     rectEdges,
+    perspectiveTargetPoints,
     exportWorldBounds,
     ensureObjId,
     findObjById,
@@ -827,6 +1359,10 @@ state.selection = [];
     gesture.arcAccum = 0;
 
     gesture.snapCache = null;
+    gesture.perspectivePointName = null;
+    gesture.lineAnchorRef = null;
+    gesture.lineEndAnchorRef = null;
+    gesture.forceLinkActive = false;
     gesture.lastScreenPrev = null;
 
     lenEntry.open = false;
@@ -1118,7 +1654,7 @@ function applyStyleToSelectionLive(patch = {}) {
   ========================= */
 
    
-  function beginSelectionTransform(kind, w) {
+  function beginSelectionTransform(kind, w, detail) {
     const idx = state.selectionIndex;
     if (idx < 0) return false;
 
@@ -1132,6 +1668,14 @@ function applyStyleToSelectionLive(patch = {}) {
     const cx = (b.minX + b.maxX) / 2;
     const cy = (b.minY + b.maxY) / 2;
     gesture.selAnchor = { x: cx, y: cy };
+
+    if (kind === "perspectivePoint") {
+      gesture.mode = "perspectivePoint";
+      gesture.perspectivePointName = detail || null;
+      gesture.startWorld = w;
+      gesture.snapCache = buildSnapCache(state.objects[idx]?._id);
+      return true;
+    }
 
     if (kind === "move") {
       gesture.mode = "selMove";
@@ -1341,6 +1885,51 @@ function onCanvasContextMenu(e) {
   }
 }
 
+
+  function createPerspectiveGuide(mode) {
+    const idx = state.selectionIndex;
+    const target = idx >= 0 ? state.objects[idx] : null;
+
+    if (!target || target.kind === "perspectiveGuide" || target.kind === "erase") {
+      showToast("Select a shape first");
+      return false;
+    }
+
+    const targetId = ensureObjId(target);
+    const pts = perspectiveTargetPoints(target);
+    if (!pts.length) {
+      showToast("No usable shape ends");
+      return false;
+    }
+
+    const b = objectBounds(target);
+    const w = Math.max(80, b.maxX - b.minX);
+    const h = Math.max(60, b.maxY - b.minY);
+    const cy = (b.minY + b.maxY) / 2;
+
+    const guide = {
+      kind: "perspectiveGuide",
+      targetId,
+      mode,
+      color: state.color || "#111111",
+      size: Math.max(1, Math.min(3, state.size || 2)),
+      opacity: 0.65,
+      lineStyle: "reference",
+      vp1: { x: b.maxX + w * 1.8, y: cy - h * 0.35 },
+      vp2: { x: b.minX - w * 1.8, y: cy - h * 0.35 }
+    };
+
+    state.undo.push(JSON.stringify(snapshot()));
+    state.redo.length = 0;
+    ensureObjId(guide);
+    state.objects.push(guide);
+    state.selectionIndex = state.objects.length - 1;
+    state.selection = [state.selectionIndex];
+    redrawAll();
+    showToast(mode >= 2 ? "2-point perspective guide added" : "1-point perspective guide added");
+    return true;
+  }
+
 function onPointerDown(e) {
   if (!inkCanvas.contains(e.target)) return;
   if (e.button === 2) return;             // let right-click be handled separately
@@ -1423,7 +2012,7 @@ function onPointerDown(e) {
 if (state.tool === "select") {
   const handle = hitHandle(sx, sy);
   if (handle && !e.shiftKey) {
-    if (beginSelectionTransform(handle.kind, w)) {
+    if (beginSelectionTransform(handle.kind, w, handle.point)) {
       redrawAll();
       return;
     }
@@ -1509,6 +2098,11 @@ if (state.tool === "select") {
       return;
     }
 
+    if (state.tool === "perspective1" || state.tool === "perspective2") {
+      createPerspectiveGuide(state.tool === "perspective2" ? 2 : 1);
+      return;
+    }
+
     state.undo.push(JSON.stringify(snapshot()));
     state.redo.length = 0;
     state.selectionIndex = -1;
@@ -1537,11 +2131,18 @@ if (state.tool === "select") {
       const bypassSnap = isMac ? e.metaKey : e.ctrlKey;
 
       let p0;
+      gesture.lineAnchorRef = null;
+      gesture.lineEndAnchorRef = null;
       if (bypassSnap) {
         p0 = { x: w.x, y: w.y };
       } else {
-        p0 = snapPointPreferEndsIntersections(w);
+        const anchorHit = (state.tool === "line" || state.tool === "arrow") ? preferredAnchorAt(w) : null;
+        p0 = anchorHit || snapPointPreferEndsIntersections(w);
         if (!p0) p0 = snapToMmGridWorld(w);
+        if ((state.tool === "line" || state.tool === "arrow") && p0.ref && isLinkRef(p0.ref)) {
+          gesture.lineAnchorRef = cloneRef(p0.ref);
+          gesture.lineEndAnchorRef = cloneRef(p0.ref);
+        }
       }
 
       const fillHeld = e.shiftKey;
@@ -1607,6 +2208,24 @@ if (state.tool === "select") {
       state.panX += ddx;
       state.panY += ddy;
       gesture.lastScreenPrev = { sx, sy };
+      redrawAll();
+      return;
+    }
+
+    if (gesture.mode === "perspectivePoint" && gesture.selIndex >= 0 && gesture.selStartObj) {
+      const obj = deepClone(gesture.selStartObj);
+      const name = gesture.perspectivePointName;
+      if (obj && name && obj[name]) {
+        const bypassSnap = isMac ? e.metaKey : e.ctrlKey;
+        let p = { x: w.x, y: w.y };
+        if (!bypassSnap) {
+          const hit = snapPointPreferEndsIntersections(w);
+          p = hit || snapToMmGridWorld(w);
+        }
+        obj[name].x = p.x;
+        obj[name].y = p.y;
+        state.objects[gesture.selIndex] = obj;
+      }
       redrawAll();
       return;
     }
@@ -1751,10 +2370,52 @@ if (state.tool === "select") {
       const k = gesture.activeObj.kind;
       const bypassSnap = isMac ? e.metaKey : e.ctrlKey;
 
-      const startPt = { x: gesture.activeObj.x1, y: gesture.activeObj.y1 };
+      let startPt = { x: gesture.activeObj.x1, y: gesture.activeObj.y1 };
       let p2 = { x: w.x, y: w.y };
 
-      if (k === "line" || k === "arrow") p2 = snapLinePoint(startPt, p2, bypassSnap);
+      if (k === "line" || k === "arrow") {
+        p2 = snapLinePoint(startPt, p2, bypassSnap);
+        gesture.lineEndAnchorRef = (!bypassSnap && p2.ref && isLinkRef(p2.ref)) ? cloneRef(p2.ref) : null;
+
+        if (!bypassSnap && gesture.lineAnchorRef && p2.perspectiveRef) {
+          const perspectiveAnchorRef = normalizePerspectiveAnchorForVP(gesture.lineAnchorRef, p2.perspectiveRef, startPt);
+          const perspectiveAnchorPt = resolveAnchorPoint(perspectiveAnchorRef);
+          if (perspectiveAnchorPt) {
+            gesture.activeObj.x1 = perspectiveAnchorPt.x;
+            gesture.activeObj.y1 = perspectiveAnchorPt.y;
+            startPt = { x: perspectiveAnchorPt.x, y: perspectiveAnchorPt.y };
+            p2 = snapLinePoint(startPt, { x: w.x, y: w.y }, bypassSnap);
+          }
+
+          const lengthWorld = Math.max(0.001, Math.hypot(p2.x - startPt.x, p2.y - startPt.y));
+          const vp = resolveVanishingPoint(p2.perspectiveRef);
+          const lenToVp = vp ? Math.hypot(vp.x - startPt.x, vp.y - startPt.y) : 0;
+          const rayT = Number.isFinite(lenToVp) && lenToVp > 0.001 ? Math.max(0.001, lengthWorld / lenToVp) : undefined;
+          gesture.activeObj.perspectiveLink = {
+            anchor: cloneRef(perspectiveAnchorRef || gesture.lineAnchorRef),
+            vp: cloneRef(p2.perspectiveRef),
+            endMode: p2.perspectiveEndMode || "length",
+            lengthWorld,
+            ...(rayT ? { rayT } : {})
+          };
+          delete gesture.activeObj.endpointLinks;
+        } else {
+          if (gesture.activeObj.perspectiveLink) delete gesture.activeObj.perspectiveLink;
+
+          const startRef = gesture.lineAnchorRef || null;
+          const endRef = gesture.lineEndAnchorRef || null;
+          if (startRef || endRef) {
+            gesture.activeObj.endpointLinks = {
+              ...(startRef ? { start: cloneRef(startRef) } : {}),
+              ...(endRef ? { end: cloneRef(endRef) } : {})
+            };
+          } else if (gesture.activeObj.endpointLinks) {
+            delete gesture.activeObj.endpointLinks;
+          }
+
+          if (gesture.forceLinkActive) autoLinkLinesTouchingDrawnLine(gesture.activeObj);
+        }
+      }
       else if (k === "rect" || k === "circle") p2 = snapShapePoint(startPt, p2, bypassSnap);
 
       if (k === "circle" && e.altKey) {
@@ -1848,6 +2509,25 @@ if (!typing && e.code === "Space") {
   e.preventDefault();
   return;
 }
+
+    if (!typing && (e.key === "l" || e.key === "L") && !mod) {
+      const isDrawingLine = gesture.active && gesture.mode === "drawShape" && gesture.activeObj && (gesture.activeObj.kind === "line" || gesture.activeObj.kind === "arrow");
+      const selectedLineObjs = (state.selection || [])
+        .map(i => state.objects[i])
+        .filter(o => o && (o.kind === "line" || o.kind === "arrow"));
+      const allLineObjs = state.objects.filter(o => o && (o.kind === "line" || o.kind === "arrow"));
+
+      if (isDrawingLine || selectedLineObjs.length || state.tool === "line" || state.tool === "arrow") {
+        e.preventDefault();
+        gesture.forceLinkActive = isDrawingLine;
+        state.undo.push(JSON.stringify(snapshot()));
+        state.redo.length = 0;
+        const changed = autoLinkOverlappingLines(isDrawingLine ? [gesture.activeObj] : (selectedLineObjs.length ? selectedLineObjs : allLineObjs));
+        redrawAll();
+        showToast(changed ? "Overlaps linked" : "No overlaps to link");
+        return;
+      }
+    }
 
     if (!typing && (e.key === "f" || e.key === "F")) {
       const idx = state.selectionIndex;
