@@ -1049,7 +1049,7 @@ window.WBGeometry = (() => {
 
   const hit = snapPointPreferEndsIntersections(rawPt);
   if (hit) {
-    return { x: hit.x, y: hit.y, snapKind: "node", ref: null };
+    return { x: hit.x, y: hit.y, snapKind: "node", ref: hit.ref || null };
   }
 
   const radiusWorld = SNAP_RADIUS_PX / (state.zoom || 1);
@@ -1105,7 +1105,7 @@ function snapPolyPoint(rawPt, bypassSnap) {
       x: hit.x,
       y: hit.y,
       snapKind: "node",
-      ref: null
+      ref: hit.ref || null
     };
   }
 
