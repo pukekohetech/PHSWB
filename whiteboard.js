@@ -157,18 +157,135 @@ clipboard: null,
 
   // SVG reveal state
   let _nextObjId = 1;
+  let _nextRevealId = 1;
   const svgReveal = { active: false, groupId: null, partIds: [], revealed: 0 };
   const MANUAL_HIDDEN_REVEAL_GROUP = "__manual_hidden_objects__";
 
+  function syncNextObjIdCounter(objects = state.objects) {
+    let maxId = 0;
+    for (const obj of objects || []) {
+      const m = String(obj?._id || "").match(/^o(\d+)$/);
+      if (m) maxId = Math.max(maxId, Number(m[1]) || 0);
+    }
+    _nextObjId = Math.max(_nextObjId, maxId + 1);
+    return _nextObjId;
+  }
+
   function ensureObjId(o) {
     if (!o) return null;
-    if (!o._id) o._id = `o${_nextObjId++}`;
+    if (!o._id) {
+      let id = "";
+      do {
+        id = `o${_nextObjId++}`;
+      } while (state.objects.some(obj => obj && obj !== o && obj._id === id));
+      o._id = id;
+    } else {
+      const m = String(o._id).match(/^o(\d+)$/);
+      if (m) _nextObjId = Math.max(_nextObjId, (Number(m[1]) || 0) + 1);
+    }
     return o._id;
+  }
+
+  function nextUniqueRevealId(used = null) {
+    const taken = used || new Set(state.objects.map(obj => obj?._revealId).filter(Boolean));
+    let id = "";
+    do {
+      id = `r${_nextRevealId++}`;
+    } while (taken.has(id));
+    return id;
+  }
+
+  function ensureRevealId(o) {
+    if (!o) return null;
+    if (!o._revealId) o._revealId = nextUniqueRevealId();
+    const m = String(o._revealId).match(/^r(\d+)$/);
+    if (m) _nextRevealId = Math.max(_nextRevealId, (Number(m[1]) || 0) + 1);
+    return o._revealId;
+  }
+
+  function repairRevealIds(objects = state.objects) {
+    const used = new Set();
+    let repaired = 0;
+
+    for (const obj of objects || []) {
+      if (!obj || !obj.kind) continue;
+      const oldId = String(obj._revealId || "").trim();
+      if (!oldId || used.has(oldId)) {
+        obj._revealId = nextUniqueRevealId(used);
+        repaired += 1;
+      } else {
+        obj._revealId = oldId;
+      }
+      used.add(obj._revealId);
+      const m = String(obj._revealId).match(/^r(\d+)$/);
+      if (m) _nextRevealId = Math.max(_nextRevealId, (Number(m[1]) || 0) + 1);
+    }
+
+    return repaired;
   }
 
   function findObjById(id) {
     if (!id) return null;
     return state.objects.find(o => o && o._id === id) || null;
+  }
+
+  function findObjByRevealId(id) {
+    if (!id) return null;
+    return state.objects.find(o => o && o._revealId === id) || null;
+  }
+
+  function migrateRevealPartIds(partIds = [], groupId = null) {
+    const repairedRevealIds = repairRevealIds(state.objects);
+    const incoming = Array.isArray(partIds) ? partIds.filter(Boolean).map(String) : [];
+    const byRevealId = new Map();
+    for (const obj of state.objects) {
+      if (obj && obj._revealId) byRevealId.set(obj._revealId, obj);
+    }
+
+    let candidates = [];
+    if (groupId === MANUAL_HIDDEN_REVEAL_GROUP) {
+      candidates = state.objects.filter(obj => obj && obj.kind);
+    } else if (groupId) {
+      candidates = state.objects.filter(obj => obj && obj.kind && obj.svgGroupId === groupId);
+    }
+
+    if (!candidates.length && incoming.length) {
+      const legacyIds = new Set(incoming);
+      candidates = state.objects.filter(obj =>
+        obj && obj.kind && (
+          legacyIds.has(String(obj._revealId || "")) ||
+          legacyIds.has(String(obj._id || ""))
+        )
+      );
+    }
+
+    if (!candidates.length) {
+      candidates = state.objects.filter(obj => obj && obj.kind && obj.hidden);
+    }
+
+    const candidateIds = new Set(candidates.map(obj => ensureRevealId(obj)));
+    const incomingAreRevealIds = incoming.length > 0 && incoming.every(id => byRevealId.has(id));
+    const migrated = [];
+    const seen = new Set();
+
+    if (incomingAreRevealIds) {
+      for (const id of incoming) {
+        if (!candidateIds.has(id) || seen.has(id)) continue;
+        migrated.push(id);
+        seen.add(id);
+      }
+    }
+
+    // Legacy snapshots stored geometry IDs. Rebuild those lists in actual
+    // object order so duplicate geometry IDs cannot merge reveal steps.
+    for (const obj of candidates) {
+      const id = ensureRevealId(obj);
+      if (seen.has(id)) continue;
+      migrated.push(id);
+      seen.add(id);
+    }
+
+    return { partIds: migrated, repairedRevealIds };
   }
 
   function findObjIndexById(id) {
@@ -266,6 +383,9 @@ function pasteClipboard() {
 
   for (const src of state.clipboard) {
     const obj = deepClone(src);
+    // Pasted objects must have fresh geometry and reveal identities.
+    delete obj._id;
+    delete obj._revealId;
 
     if ("x1" in obj) {
       obj.x1 += 20;
@@ -285,6 +405,7 @@ function pasteClipboard() {
     }
 
     ensureObjId(obj);
+    ensureRevealId(obj);
     state.objects.push(obj);
     addObjectToActiveReveal(obj);
     newSelection.push(state.objects.length - 1);
@@ -2245,7 +2366,12 @@ state.selection = [];
     perspectiveTargetPoints,
     exportWorldBounds,
     ensureObjId,
+    ensureRevealId,
     findObjById,
+    findObjByRevealId,
+    repairRevealIds,
+    migrateRevealPartIds,
+    syncNextObjIdCounter,
     stopSvgPlayback,
     resetSvgRevealState
   });
@@ -2449,9 +2575,10 @@ function applyStyleToSelectionLive(patch = {}) {
   function addObjectToActiveReveal(obj, opts = {}) {
     if (!isRevealableDrawnObject(obj)) return false;
     ensureObjId(obj);
+    const revealId = ensureRevealId(obj);
 
     // If there are already hidden objects but the reveal list was not active,
-    // rebuild the manual list first so newly drawn objects join the same show/hide sequence.
+    // rebuild the manual list first so newly drawn objects join the sequence.
     if ((!svgReveal.active || !Array.isArray(svgReveal.partIds)) && hiddenObjectIds().length) {
       rebuildManualHiddenRevealList();
     }
@@ -2460,7 +2587,7 @@ function applyStyleToSelectionLive(patch = {}) {
 
     obj.svgGroupId = svgReveal.groupId;
 
-    if (!svgReveal.partIds.includes(obj._id)) {
+    if (!svgReveal.partIds.includes(revealId)) {
       const defaultInsertAt = svgReveal.groupId === MANUAL_HIDDEN_REVEAL_GROUP
         ? svgReveal.partIds.length
         : svgReveal.revealed + 1;
@@ -2469,11 +2596,9 @@ function applyStyleToSelectionLive(patch = {}) {
         0,
         svgReveal.partIds.length
       );
-      svgReveal.partIds.splice(insertAt, 0, obj._id);
+      svgReveal.partIds.splice(insertAt, 0, revealId);
     }
 
-    // Register new objects in the reveal sequence without hiding them by default.
-    // Use opts.hide === true only for actions that deliberately create hidden reveal steps.
     if (opts.hide === true) obj.hidden = true;
     syncSvgRevealCountFromVisibility();
     return true;
@@ -2493,14 +2618,19 @@ function applyStyleToSelectionLive(patch = {}) {
   }
 
   function hiddenObjectIds() {
-    return state.objects.filter(o => o && o.hidden && o._id).map(o => o._id);
+    return state.objects
+      .filter(o => o && o.hidden && o.kind)
+      .map(o => ensureRevealId(o));
   }
 
   function visibleObjectIds() {
-    return state.objects.filter(o => o && !o.hidden && o._id).map(o => o._id);
+    return state.objects
+      .filter(o => o && !o.hidden && o.kind)
+      .map(o => ensureRevealId(o));
   }
 
   function rebuildManualHiddenRevealList(extraIds = []) {
+    repairRevealIds(state.objects);
     const ids = [];
     const seen = new Set();
 
@@ -2509,27 +2639,27 @@ function applyStyleToSelectionLive(patch = {}) {
     for (const obj of state.objects) {
       if (!isRevealableDrawnObject(obj)) continue;
       ensureObjId(obj);
-      if (seen.has(obj._id)) continue;
-      ids.push(obj._id);
-      seen.add(obj._id);
+      const revealId = ensureRevealId(obj);
+      if (seen.has(revealId)) continue;
+      ids.push(revealId);
+      seen.add(revealId);
     }
 
-    // Include explicit IDs as a final safety net for an object that has just
-    // been created but has not yet reached its normal registration path.
+    // Accept either a new reveal ID or an old geometry ID while migrating.
     for (const id of extraIds || []) {
-      const obj = findObjById(id);
+      const obj = findObjByRevealId(id) || findObjById(id);
       if (!isRevealableDrawnObject(obj)) continue;
-      ensureObjId(obj);
-      if (seen.has(obj._id)) continue;
-      ids.push(obj._id);
-      seen.add(obj._id);
+      const revealId = ensureRevealId(obj);
+      if (seen.has(revealId)) continue;
+      ids.push(revealId);
+      seen.add(revealId);
     }
 
     svgReveal.active = ids.length > 0;
     svgReveal.groupId = ids.length ? MANUAL_HIDDEN_REVEAL_GROUP : null;
     svgReveal.partIds = ids;
     for (const id of ids) {
-      const obj = findObjById(id);
+      const obj = findObjByRevealId(id);
       if (obj) obj.svgGroupId = MANUAL_HIDDEN_REVEAL_GROUP;
     }
     syncSvgRevealCountFromVisibility();
@@ -2560,25 +2690,27 @@ function applyStyleToSelectionLive(patch = {}) {
   function normalizeRevealList() {
     if (!svgReveal.active || !Array.isArray(svgReveal.partIds)) return false;
 
+    repairRevealIds(state.objects);
     const ids = [];
     const seen = new Set();
 
     for (const id of svgReveal.partIds) {
-      const obj = findObjById(id);
-      if (!obj || !obj._id || seen.has(obj._id)) continue;
-      ids.push(obj._id);
-      seen.add(obj._id);
+      const obj = findObjByRevealId(id) || findObjById(id);
+      if (!obj) continue;
+      const revealId = ensureRevealId(obj);
+      if (seen.has(revealId)) continue;
+      ids.push(revealId);
+      seen.add(revealId);
     }
 
-    // Manual hide/reveal includes every drawable object, not only the ones
-    // that happen to be hidden at this moment.
     if (svgReveal.groupId === MANUAL_HIDDEN_REVEAL_GROUP) {
       for (const obj of state.objects) {
         if (!isRevealableDrawnObject(obj)) continue;
         ensureObjId(obj);
-        if (seen.has(obj._id)) continue;
-        ids.push(obj._id);
-        seen.add(obj._id);
+        const revealId = ensureRevealId(obj);
+        if (seen.has(revealId)) continue;
+        ids.push(revealId);
+        seen.add(revealId);
         obj.svgGroupId = MANUAL_HIDDEN_REVEAL_GROUP;
       }
     }
@@ -2596,32 +2728,27 @@ function applyStyleToSelectionLive(patch = {}) {
       return;
     }
 
-    // A reveal count only works reliably when visible objects form one prefix
-    // and hidden objects form one suffix. New drawings can otherwise create a
-    // visible item after a hidden item, causing a blank/skipped reveal click.
     if (svgReveal.groupId === MANUAL_HIDDEN_REVEAL_GROUP) {
       const visibleIds = [];
       const hiddenIds = [];
       const seen = new Set();
 
       for (const id of svgReveal.partIds) {
-        const obj = findObjById(id);
+        const obj = findObjByRevealId(id) || findObjById(id);
         if (!isRevealableDrawnObject(obj)) continue;
-        ensureObjId(obj);
-        if (seen.has(obj._id)) continue;
-        seen.add(obj._id);
-        (obj.hidden ? hiddenIds : visibleIds).push(obj._id);
+        const revealId = ensureRevealId(obj);
+        if (seen.has(revealId)) continue;
+        seen.add(revealId);
+        (obj.hidden ? hiddenIds : visibleIds).push(revealId);
       }
 
-      // Pick up any object that was created by a path which did not explicitly
-      // register it yet. This is a final guard against missed reveal steps.
       for (const obj of state.objects) {
         if (!isRevealableDrawnObject(obj)) continue;
-        ensureObjId(obj);
-        if (seen.has(obj._id)) continue;
-        seen.add(obj._id);
+        const revealId = ensureRevealId(obj);
+        if (seen.has(revealId)) continue;
+        seen.add(revealId);
         obj.svgGroupId = MANUAL_HIDDEN_REVEAL_GROUP;
-        (obj.hidden ? hiddenIds : visibleIds).push(obj._id);
+        (obj.hidden ? hiddenIds : visibleIds).push(revealId);
       }
 
       svgReveal.partIds = [...visibleIds, ...hiddenIds];
@@ -2631,7 +2758,7 @@ function applyStyleToSelectionLive(patch = {}) {
 
     let index = 0;
     while (index < svgReveal.partIds.length) {
-      const obj = findObjById(svgReveal.partIds[index]);
+      const obj = findObjByRevealId(svgReveal.partIds[index]);
       if (obj && obj.hidden) break;
       index += 1;
     }
@@ -2639,7 +2766,9 @@ function applyStyleToSelectionLive(patch = {}) {
   }
 
   function hideSelectedObjects() {
-    const indices = (state.selection && state.selection.length ? state.selection : (state.selectionIndex >= 0 ? [state.selectionIndex] : []))
+    const indices = (state.selection && state.selection.length
+      ? state.selection
+      : (state.selectionIndex >= 0 ? [state.selectionIndex] : []))
       .filter(i => state.objects[i] && !state.objects[i].hidden);
 
     if (!indices.length) {
@@ -2658,19 +2787,18 @@ function applyStyleToSelectionLive(patch = {}) {
     const hiddenIds = [];
     for (const i of indices) {
       state.objects[i].hidden = true;
-      if (state.objects[i]._id) hiddenIds.push(state.objects[i]._id);
+      hiddenIds.push(ensureRevealId(state.objects[i]));
     }
 
-    // Pressing the manual Hide control always starts/updates a manual sequence
-    // containing every drawable object. This keeps imported SVG items and later
-    // drawings in one predictable one-by-one order.
     rebuildManualHiddenRevealList(hiddenIds);
 
     state.selection = [];
     state.selectionIndex = -1;
     hardResetGesture();
     redrawAll();
-    showToast(indices.length === 1 ? "Hidden — use ▶ / . to reveal" : `${indices.length} objects hidden — use ▶ / . to reveal`);
+    showToast(indices.length === 1
+      ? "Hidden — use ▶ / . to reveal"
+      : `${indices.length} objects hidden — use ▶ / . to reveal`);
     return true;
   }
 
@@ -2728,7 +2856,7 @@ function applyStyleToSelectionLive(patch = {}) {
     const total = svgReveal.partIds.length;
     while (svgReveal.revealed < total) {
       const id = svgReveal.partIds[svgReveal.revealed++];
-      const obj = findObjById(id);
+      const obj = findObjByRevealId(id);
       if (!obj || !obj.hidden) continue;
       obj.hidden = false;
       syncSvgRevealCountFromVisibility();
@@ -2744,7 +2872,7 @@ function applyStyleToSelectionLive(patch = {}) {
     normalizeRevealList();
     while (svgReveal.revealed > 0) {
       const id = svgReveal.partIds[--svgReveal.revealed];
-      const obj = findObjById(id);
+      const obj = findObjByRevealId(id);
       if (!obj || obj.hidden) continue;
       obj.hidden = true;
       syncSvgRevealCountFromVisibility();
@@ -2762,12 +2890,12 @@ function applyStyleToSelectionLive(patch = {}) {
 
     while (svgReveal.revealed < target) {
       const id = svgReveal.partIds[svgReveal.revealed++];
-      const obj = findObjById(id);
+      const obj = findObjByRevealId(id);
       if (obj) obj.hidden = false;
     }
     while (svgReveal.revealed > target) {
       const id = svgReveal.partIds[--svgReveal.revealed];
-      const obj = findObjById(id);
+      const obj = findObjByRevealId(id);
       if (obj) obj.hidden = true;
     }
 
