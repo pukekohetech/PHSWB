@@ -285,9 +285,8 @@ function pasteClipboard() {
     }
 
     ensureObjId(obj);
-    addObjectToActiveReveal(obj);
-
     state.objects.push(obj);
+    addObjectToActiveReveal(obj);
     newSelection.push(state.objects.length - 1);
   }
 
@@ -1656,6 +1655,7 @@ state.selection = [];
     };
     ensureObjId(helper);
     state.objects.push(helper);
+    addObjectToActiveReveal(helper, { hide: false });
     updatePerspectiveLinkedObject(helper);
     return true;
   }
@@ -2443,11 +2443,12 @@ function applyStyleToSelectionLive(patch = {}) {
      Hide / unhide visibility
   ========================= */
   function isRevealableDrawnObject(obj) {
-    return !!(obj && obj._id && obj.kind);
+    return !!(obj && obj.kind);
   }
 
   function addObjectToActiveReveal(obj, opts = {}) {
     if (!isRevealableDrawnObject(obj)) return false;
+    ensureObjId(obj);
 
     // If there are already hidden objects but the reveal list was not active,
     // rebuild the manual list first so newly drawn objects join the same show/hide sequence.
@@ -2500,35 +2501,37 @@ function applyStyleToSelectionLive(patch = {}) {
   }
 
   function rebuildManualHiddenRevealList(extraIds = []) {
-    const existing = svgReveal.groupId === MANUAL_HIDDEN_REVEAL_GROUP && Array.isArray(svgReveal.partIds)
-      ? svgReveal.partIds.filter(Boolean)
-      : [];
-    const wanted = new Set(existing);
-    for (const id of extraIds || []) if (id) wanted.add(id);
-
     const ids = [];
     const seen = new Set();
 
-    // Preserve the existing reveal order first.
-    for (const id of existing) {
-      const obj = findObjById(id);
-      if (!obj || !obj._id || seen.has(obj._id)) continue;
+    // Manual reveal order follows the actual drawing/object order. Every
+    // drawable item is included, even when it is currently visible.
+    for (const obj of state.objects) {
+      if (!isRevealableDrawnObject(obj)) continue;
+      ensureObjId(obj);
+      if (seen.has(obj._id)) continue;
       ids.push(obj._id);
       seen.add(obj._id);
     }
 
-    // Then add any hidden/new objects in drawing order.
-    for (const obj of state.objects) {
-      if (!obj || !obj._id || seen.has(obj._id)) continue;
-      if (obj.hidden || wanted.has(obj._id)) {
-        ids.push(obj._id);
-        seen.add(obj._id);
-      }
+    // Include explicit IDs as a final safety net for an object that has just
+    // been created but has not yet reached its normal registration path.
+    for (const id of extraIds || []) {
+      const obj = findObjById(id);
+      if (!isRevealableDrawnObject(obj)) continue;
+      ensureObjId(obj);
+      if (seen.has(obj._id)) continue;
+      ids.push(obj._id);
+      seen.add(obj._id);
     }
 
     svgReveal.active = ids.length > 0;
     svgReveal.groupId = ids.length ? MANUAL_HIDDEN_REVEAL_GROUP : null;
     svgReveal.partIds = ids;
+    for (const id of ids) {
+      const obj = findObjById(id);
+      if (obj) obj.svgGroupId = MANUAL_HIDDEN_REVEAL_GROUP;
+    }
     syncSvgRevealCountFromVisibility();
     return ids.length > 0;
   }
@@ -2567,16 +2570,16 @@ function applyStyleToSelectionLive(patch = {}) {
       seen.add(obj._id);
     }
 
-    // Manual hide/reveal should include every currently hidden drawn object,
-    // even if it was drawn after the list was first created.
+    // Manual hide/reveal includes every drawable object, not only the ones
+    // that happen to be hidden at this moment.
     if (svgReveal.groupId === MANUAL_HIDDEN_REVEAL_GROUP) {
       for (const obj of state.objects) {
-        if (!obj || !obj._id || seen.has(obj._id)) continue;
-        if (obj.hidden) {
-          ids.push(obj._id);
-          seen.add(obj._id);
-          obj.svgGroupId = MANUAL_HIDDEN_REVEAL_GROUP;
-        }
+        if (!isRevealableDrawnObject(obj)) continue;
+        ensureObjId(obj);
+        if (seen.has(obj._id)) continue;
+        ids.push(obj._id);
+        seen.add(obj._id);
+        obj.svgGroupId = MANUAL_HIDDEN_REVEAL_GROUP;
       }
     }
 
@@ -2593,9 +2596,39 @@ function applyStyleToSelectionLive(patch = {}) {
       return;
     }
 
-    // `revealed` is an index into the ordered reveal list, not just a count.
-    // Counting all visible objects can skip hidden items when the list contains
-    // mixed visible/hidden objects, so use the first hidden object as the frontier.
+    // A reveal count only works reliably when visible objects form one prefix
+    // and hidden objects form one suffix. New drawings can otherwise create a
+    // visible item after a hidden item, causing a blank/skipped reveal click.
+    if (svgReveal.groupId === MANUAL_HIDDEN_REVEAL_GROUP) {
+      const visibleIds = [];
+      const hiddenIds = [];
+      const seen = new Set();
+
+      for (const id of svgReveal.partIds) {
+        const obj = findObjById(id);
+        if (!isRevealableDrawnObject(obj)) continue;
+        ensureObjId(obj);
+        if (seen.has(obj._id)) continue;
+        seen.add(obj._id);
+        (obj.hidden ? hiddenIds : visibleIds).push(obj._id);
+      }
+
+      // Pick up any object that was created by a path which did not explicitly
+      // register it yet. This is a final guard against missed reveal steps.
+      for (const obj of state.objects) {
+        if (!isRevealableDrawnObject(obj)) continue;
+        ensureObjId(obj);
+        if (seen.has(obj._id)) continue;
+        seen.add(obj._id);
+        obj.svgGroupId = MANUAL_HIDDEN_REVEAL_GROUP;
+        (obj.hidden ? hiddenIds : visibleIds).push(obj._id);
+      }
+
+      svgReveal.partIds = [...visibleIds, ...hiddenIds];
+      svgReveal.revealed = visibleIds.length;
+      return;
+    }
+
     let index = 0;
     while (index < svgReveal.partIds.length) {
       const obj = findObjById(svgReveal.partIds[index]);
@@ -2628,11 +2661,10 @@ function applyStyleToSelectionLive(patch = {}) {
       if (state.objects[i]._id) hiddenIds.push(state.objects[i]._id);
     }
 
-    if (!svgReveal.active || svgReveal.groupId === MANUAL_HIDDEN_REVEAL_GROUP) {
-      rebuildManualHiddenRevealList(hiddenIds);
-    } else {
-      syncSvgRevealCountFromVisibility();
-    }
+    // Pressing the manual Hide control always starts/updates a manual sequence
+    // containing every drawable object. This keeps imported SVG items and later
+    // drawings in one predictable one-by-one order.
+    rebuildManualHiddenRevealList(hiddenIds);
 
     state.selection = [];
     state.selectionIndex = -1;
@@ -2697,12 +2729,13 @@ function applyStyleToSelectionLive(patch = {}) {
     while (svgReveal.revealed < total) {
       const id = svgReveal.partIds[svgReveal.revealed++];
       const obj = findObjById(id);
-      if (obj) {
-        obj.hidden = false;
-        redrawAll();
-        return true;
-      }
+      if (!obj || !obj.hidden) continue;
+      obj.hidden = false;
+      syncSvgRevealCountFromVisibility();
+      redrawAll();
+      return true;
     }
+    syncSvgRevealCountFromVisibility();
     redrawAll();
     return false;
   }
@@ -2712,12 +2745,13 @@ function applyStyleToSelectionLive(patch = {}) {
     while (svgReveal.revealed > 0) {
       const id = svgReveal.partIds[--svgReveal.revealed];
       const obj = findObjById(id);
-      if (obj) {
-        obj.hidden = true;
-        redrawAll();
-        return true;
-      }
+      if (!obj || obj.hidden) continue;
+      obj.hidden = true;
+      syncSvgRevealCountFromVisibility();
+      redrawAll();
+      return true;
     }
+    syncSvgRevealCountFromVisibility();
     redrawAll();
     return false;
   }
@@ -3001,11 +3035,10 @@ function commitPolyFill() {
   };
   ensureObjId(obj);
 
-  const addedToReveal = addObjectToActiveReveal(obj, { hide: false });
-
   // keep fills visually underneath outlines
   //state.objects.unshift(obj);
-state.objects.push(obj);
+  state.objects.push(obj);
+  const addedToReveal = addObjectToActiveReveal(obj, { hide: false });
 
    
   cancelPolyDraft();
@@ -3035,8 +3068,8 @@ function commitSmoothCurve() {
     points: pts.map(pt => ({ x: pt.x, y: pt.y }))
   };
   ensureObjId(obj);
-  const addedToReveal = addObjectToActiveReveal(obj, { hide: false });
   state.objects.push(obj);
+  const addedToReveal = addObjectToActiveReveal(obj, { hide: false });
   cancelPolyDraft();
   redrawAll();
   showToast(addedToReveal ? "Smooth curve added to reveal steps" : "Smooth curve added");
@@ -3336,8 +3369,8 @@ function onCanvasContextMenu(e) {
     state.undo.push(JSON.stringify(snapshot()));
     state.redo.length = 0;
     ensureObjId(guide);
-    addObjectToActiveReveal(guide);
     state.objects.push(guide);
+    addObjectToActiveReveal(guide);
     state.selectionIndex = state.objects.length - 1;
     state.selection = [state.selectionIndex];
     redrawAll();
@@ -3447,8 +3480,8 @@ function onPointerDown(e) {
         rot: 0
       };
       ensureObjId(obj);
-      addObjectToActiveReveal(obj);
       state.objects.push(obj);
+      addObjectToActiveReveal(obj);
       state.selectionIndex = state.objects.length - 1;
       setActiveTool("select");
       redrawAll();
